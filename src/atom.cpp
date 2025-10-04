@@ -152,7 +152,7 @@ struct Atom {
 
 vector<Atom> atoms = { 
     //   p  e  n   x    y
-    Atom(2, 2, 2, -200, 0),   // Helium
+    Atom(1, 1, 2, -200, 0),   // Helium
     Atom(6, 6, 12, 200, 0)    // Carbon
 };
 // ================= Main ================= //

@@ -14,7 +14,7 @@
 using namespace glm;
 using namespace std;
 
-const float c = 299792458.0f;    // speed of light in m/s
+const float c = 299792458.0f / 100000000.0f;    // speed of light in m/s
 const float k = 8.9875517923e9f; // Coulomb's constant
 
 // ================= Engine ================= //
@@ -110,12 +110,14 @@ struct Atom {
         int shellCap[] = {2, 8, 18, 32}; // enough for simple atoms
         float baseRadius = 45.0f;
 
-        for (int s = 0; remaining > 0 && s < 4; s++) {
-            int count = std::min(remaining, shellCap[s]);
+        for (int s = 0; remaining > 0 && s < 4; s++) {                  // iterate over shells
+            int count = std::min(remaining, shellCap[s]);               // see if current shell can store remaining electron
+
             for (int i = 0; i < count; i++) {
                 float angle = i * (2.0f * M_PI / count);
-                electronList.push_back({baseRadius * (s+1), angle, c / 50000000.0f}); // speed decreases with shell number
+                electronList.push_back({baseRadius * (s+1), angle, c}); // speed decreases with shell number
             }
+            
             remaining -= count;
         }
     };
@@ -152,9 +154,13 @@ struct Atom {
 
 vector<Atom> atoms = { 
     //   p  e  n   x    y
-    Atom(1, 1, 2, -200, 0),   // Helium
-    Atom(6, 6, 12, 200, 0)    // Carbon
+    Atom(1, 1, 2,   -200,  0),   // Helium
+    Atom(1, 1, 2,   200,   0),   // Helium
+    Atom(1, 1, 2,   0,     200),   // Helium
+    Atom(1, 1, 2,   0,    -200),   // Helium
+    Atom(6, 6, 12,  0,     0)    // Carbon
 };
+
 // ================= Main ================= //
 int main () {
 
@@ -164,6 +170,16 @@ int main () {
         for (auto &atom : atoms) {
             atom.draw();
             atom.update();
+
+            for (auto &atom2 : atoms) {
+                if (&atom != &atom2) { continue; }
+                int dx = atom2.x - atom.x;
+                int dy = atom2.y - atom.y;
+                float r = sqrt(dx*dx + dy*dy);
+
+
+            };
+
         };
 
         glfwSwapBuffers(engine.window);

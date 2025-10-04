@@ -14,7 +14,8 @@
 using namespace glm;
 using namespace std;
 
-float c = 299792458.0f;
+const float c = 299792458.0f / 100000000.0f;    // speed of light in m/s
+const float k = 8.9875517923e9f; // Coulomb's constant
 
 // ================= Engine ================= //
 struct Engine {
@@ -78,51 +79,53 @@ Engine engine;
 // ================= Particles ================= //
 struct Proton { float x, y; };
 struct Neutron { float x, y; };
-struct Electron { float orbitRadius; float angle; float speed;
-};
+struct Electron {float orbitRadius; float angle; float speed; };
 
 struct Atom {
-    int protons, neutrons, electrons;
+    int protons, neutrons, electrons, x, y;
     vector<Proton> protonList;
     vector<Neutron> neutronList;
     vector<Electron> electronList;
 
-    Atom(int p, int e, int n) : protons(p), neutrons(n), electrons(e) {
+    Atom(int p, int e, int n, int x, int y) : protons(p), neutrons(n), electrons(e), x(x), y(y) {
         srand(time(NULL));
 
-        // Place protons clustered at center
+    // Place protons clustered at center
         for (int i = 0; i < protons; i++) {
             float jitterX = (rand() % 10 - 5); // small random offset
             float jitterY = (rand() % 10 - 5);
-            protonList.push_back({jitterX, jitterY});
+            protonList.push_back({jitterX + x, jitterY + y});
         }
 
         // Place neutrons clustered at center
         for (int i = 0; i < neutrons; i++) {
             float jitterX = (rand() % 10 - 5);
             float jitterY = (rand() % 10 - 5);
-            neutronList.push_back({jitterX, jitterY});
+            neutronList.push_back({jitterX + x, jitterY + y});
         }
 
         // Distribute electrons into shells (2, 8, 18, 32…)
         int remaining = electrons;
         int shell = 1;
         int shellCap[] = {2, 8, 18, 32}; // enough for simple atoms
-        float baseRadius = 100.0f;
+        float baseRadius = 45.0f;
 
-        for (int s = 0; remaining > 0 && s < 4; s++) {
-            int count = std::min(remaining, shellCap[s]);
+        for (int s = 0; remaining > 0 && s < 4; s++) {                  // iterate over shells
+            int count = std::min(remaining, shellCap[s]);               // see if current shell can store remaining electron
+
             for (int i = 0; i < count; i++) {
                 float angle = i * (2.0f * M_PI / count);
-                electronList.push_back({baseRadius * (s+1), angle, c});
+                electronList.push_back({baseRadius * (s+1), angle, c}); // speed decreases with shell number
             }
+            
             remaining -= count;
         }
-    }
+    };
 
     void update() {
+        double dt = 1.0 / 60.0; // assuming 60 FPS for simplicity
         for (auto &e : electronList) {
-            e.angle += e.speed;
+            e.angle += e.speed * dt;
             if (e.angle > 2*M_PI) e.angle -= 2*M_PI;
         }
     }
@@ -143,20 +146,41 @@ struct Atom {
         for (auto &e : electronList) {
             float ex = cosf(e.angle) * e.orbitRadius;
             float ey = sinf(e.angle) * e.orbitRadius;
-            engine.drawFilledCircle(ex, ey, 6);
+            engine.drawFilledCircle(ex + x, ey + y, 6);
         }
     }
 };
-Atom helium (2, 2, 2);
- 
+
+
+vector<Atom> atoms = { 
+    //   p  e  n   x    y
+    Atom(1, 1, 2,   -200,  0),   // Helium
+    Atom(1, 1, 2,   200,   0),   // Helium
+    Atom(1, 1, 2,   0,     200),   // Helium
+    Atom(1, 1, 2,   0,    -200),   // Helium
+    Atom(6, 6, 12,  0,     0)    // Carbon
+};
+
 // ================= Main ================= //
 int main () {
 
     while (!glfwWindowShouldClose(engine.window)) {
         engine.run();
 
-        helium.draw();
-        helium.update();
+        for (auto &atom : atoms) {
+            atom.draw();
+            atom.update();
+
+            for (auto &atom2 : atoms) {
+                if (&atom != &atom2) { continue; }
+                int dx = atom2.x - atom.x;
+                int dy = atom2.y - atom.y;
+                float r = sqrt(dx*dx + dy*dy);
+
+
+            };
+
+        };
 
         glfwSwapBuffers(engine.window);
         glfwPollEvents();

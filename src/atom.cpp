@@ -8,6 +8,9 @@
 #include <cmath>
 #include <cstdlib>
 #include <ctime>
+#include <iomanip>
+#include <thread>
+#include <chrono>
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -15,7 +18,10 @@ using namespace glm;
 using namespace std;
 
 const float c = 299792458.0f / 100000000.0f;    // speed of light in m/s
+const float eu = 2.71828182845904523536f; // Euler's number
 const float k = 8.9875517923e9f; // Coulomb's constant
+const float a0 = 52.9f; // Bohr radius in pm
+const float electron_r = 1.0f;
 
 // ================= Engine ================= //
 struct Particle;
@@ -119,7 +125,7 @@ struct Engine {
             exit(EXIT_FAILURE);
         }
         // create window
-        window = glfwCreateWindow(WIDTH, HEIGHT, "Black Hole", nullptr, nullptr);
+        window = glfwCreateWindow(WIDTH, HEIGHT, "Quantum Simulation by kavan G", nullptr, nullptr);
         if (!window) {
             cerr << "Failed to create GLFW window\n";
             glfwTerminate();
@@ -217,11 +223,28 @@ struct Engine {
         float x = r * sin(theta) * cos(phi);
         float y = r * cos(theta);
         float z = r * sin(theta) * sin(phi);
-        return glm::vec3(x, y, z);
+        return vec3(x, y, z);
     };
 };
 Engine engine;
+void setupCameraCallbacks(GLFWwindow* window) {
+    glfwSetWindowUserPointer(window, &camera);
 
+    glfwSetMouseButtonCallback(window, [](GLFWwindow* win, int button, int action, int mods) {
+        Camera* cam = (Camera*)glfwGetWindowUserPointer(win);
+        cam->processMouseButton(button, action, mods, win);
+    });
+
+    glfwSetCursorPosCallback(window, [](GLFWwindow* win, double x, double y) {
+        Camera* cam = (Camera*)glfwGetWindowUserPointer(win);
+        cam->processMouseMove(x, y);
+    });
+
+    glfwSetScrollCallback(window, [](GLFWwindow* win, double xoffset, double yoffset) {
+        Camera* cam = (Camera*)glfwGetWindowUserPointer(win);
+        cam->processScroll(xoffset, yoffset);
+    });
+}
 // ================= Objects ================= //
 struct Grid {
     GLuint gridVAO, gridVBO;
@@ -311,8 +334,8 @@ struct Particle {
         int sectors = 25;
 
         for(float i = 0.0f; i <= stacks; ++i){
-            float theta1 = (i / stacks) * glm::pi<float>();
-            float theta2 = (i+1) / stacks * glm::pi<float>();
+            float theta1 = (i / stacks) * pi<float>();
+            float theta2 = (i+1) / stacks * pi<float>();
             for (float j = 0.0f; j < sectors; ++j){
                 float phi1 = j / sectors * 2 * glm::pi<float>();
                 float phi2 = (j+1) / sectors * 2 * glm::pi<float>();
@@ -336,75 +359,101 @@ struct Particle {
 };
 vector<Particle> particles{
             // r   // color                      // position
-    Particle(8.7f, vec4(1.0f, 0.0f, 0.0f, 1.0f), vec3(0.0f, 0.0f, 0.0f)),
-    // Particle(1.0f, vec4(0.0f, 1.0f, 1.0f, 1.0f), vec3(100.0f, 0.0f, 100.0f)),
+    Particle(8.7f, vec4(1.0f, 0.0f, 0.0f, 1.0f), vec3(0.0f, 0.0f, 0.0f)), // nucleus
 };
 
-
-void setupCameraCallbacks(GLFWwindow* window) {
-    glfwSetWindowUserPointer(window, &camera);
-
-    glfwSetMouseButtonCallback(window, [](GLFWwindow* win, int button, int action, int mods) {
-        Camera* cam = (Camera*)glfwGetWindowUserPointer(win);
-        cam->processMouseButton(button, action, mods, win);
-    });
-
-    glfwSetCursorPosCallback(window, [](GLFWwindow* win, double x, double y) {
-        Camera* cam = (Camera*)glfwGetWindowUserPointer(win);
-        cam->processMouseMove(x, y);
-    });
-
-    glfwSetScrollCallback(window, [](GLFWwindow* win, double xoffset, double yoffset) {
-        Camera* cam = (Camera*)glfwGetWindowUserPointer(win);
-        cam->processScroll(xoffset, yoffset);
-    });
+float radialProbability1s(float r) {
+    float r_bohr = r / a0;
+    return 4.0 * r_bohr*r_bohr * exp(-2.0 * r_bohr);
+    //4 * r**2 * np.exp(-2 * r)
+}
+float radialProbability2s(float r) {
+    float r_bohr = r / a0;  // convert to Bohr radii
+    return 0.5f * pow(r_bohr, 2) * pow(1 - r_bohr / 2.0f, 2) * exp(-r_bohr);
+}
+float radialProbability2p(float r) {
+    float r_bohr = r / a0;  // convert to Bohr radii
+    return (pow(r_bohr, 4) / 24.0f) * exp(-r_bohr);
 }
 
-void generateElectronCloud(vec3 nucleusPos, float base_radius, vec3 color, int count) {
-    particles.reserve(count);
-
-    for (int i = 0; i < count; i++) {
-        float theta = static_cast<float>(rand()) / RAND_MAX * 2 * M_PI;
-        float phi = acos(2.0f * static_cast<float>(rand()) / RAND_MAX - 1);
-        float r = base_radius * pow(static_cast<float>(rand()) / RAND_MAX, 1.0f / 3.0f);
-
-        float x = r * sin(phi) * cos(theta);
-        float y = r * sin(phi) * sin(theta);
-        float z = r * cos(phi);
-
-        particles.push_back(Particle(1.0f, vec4(color, 1.0f), vec3(x, y, z)));
+float sampleR1s() {
+    float r_max = 5.0f * a0;  // arbitrary max radius
+    float P_max = radialProbability1s(0.0f); // max occurs at r ~ a0 (approx)
+    
+    while (true) {
+        float r = static_cast<float>(rand()) / RAND_MAX * r_max;
+        float y = static_cast<float>(rand()) / RAND_MAX * P_max;
+        if (y <= radialProbability1s(r)) return r;
     }
 }
-void generatePOrbital(glm::vec3 nucleusPos, float base_radius, glm::vec3 color, int count, char axis = 'x') {
-    particles.reserve(count);
+float sampleR2s() {
+    float r_max = 10.0f * a0;  // 2s extends farther out than 1s
+    float P_max = radialProbability2s(a0); // rough peak near r ≈ a0
 
-    for (int i = 0; i < count; i++) {
-        // Random spherical coordinates
-        float theta = static_cast<float>(rand()) / RAND_MAX * 2 * M_PI;
-        float phi = acos(2.0f * static_cast<float>(rand()) / RAND_MAX - 1);
-        float r = base_radius * pow(static_cast<float>(rand()) / RAND_MAX, 1.0f / 3.0f);
+    while (true) {
+        float r = static_cast<float>(rand()) / RAND_MAX * r_max;
+        float y = static_cast<float>(rand()) / RAND_MAX * P_max;
+        if (y <= radialProbability2s(r)) return r;
+    }
+}
+float sampleR2p() {
+    float r_max = 15.0f * a0;
+    float P_max = radialProbability2p(4.0f * a0);
 
-        // Convert to Cartesian
-        float x = r * sin(phi) * cos(theta);
-        float y = r * sin(phi) * sin(theta);
-        float z = r * cos(phi);
+    while (true) {
+        float r = static_cast<float>(rand()) / RAND_MAX * r_max;
+        float y = static_cast<float>(rand()) / RAND_MAX * P_max;
+        if (y <= radialProbability2p(r)) return r;
+    }
+}
 
-        // Determine direction bias depending on orbital type
-        float directionalFactor = 0.0f;
-        switch (axis) {
-            case 'x': directionalFactor = x / base_radius; break;
-            case 'y': directionalFactor = y / base_radius; break;
-            case 'z': directionalFactor = z / base_radius; break;
-        }
+void sample1s() {   // change return type to void
+    float r = sampleR1s();
+    float theta = acos(1.0f - 2.0f * static_cast<float>(rand()) / RAND_MAX); // [0, pi]
+    float phi   = 2.0f * M_PI * static_cast<float>(rand()) / RAND_MAX;       // [0, 2pi]
+    vec3 electronPos = engine.sphericalToCartesian(r, theta, phi);
+    
+    // Construct Particle in-place
+    if (true) {
+    particles.emplace_back(electron_r, vec4(1.0f, 1.0f, 1.0f, 1.0f), electronPos); // cyan-ish color
+    }
+}
+void sample2s() {
+    float r = sampleR2s();
+    float theta = acos(1.0f - 2.0f * static_cast<float>(rand()) / RAND_MAX); // [0, π]
+    float phi   = 2.0f * M_PI * static_cast<float>(rand()) / RAND_MAX;       // [0, 2π]
+    
+    vec3 electronPos = engine.sphericalToCartesian(r, theta, phi);
 
-        // Probability weight: stronger near poles, zero at node (center)
-        float weight = directionalFactor * directionalFactor; // cos² pattern
-        if (static_cast<float>(rand()) / RAND_MAX < weight) {
-            vec3 pos = nucleusPos + vec3(x, y, z);
-            particles.push_back({
-                Particle(1.0f, vec4(color, 1.0f), pos)
-            });
-        }
+    // Use a distinct color for visualization, e.g. yellow for 2s
+    if (true) {
+    particles.emplace_back(electron_r, vec4(0.0f, 1.0f, 1.0f, 1.0f), electronPos); // cyan-ish color
+    }
+}
+void sample2p_x() {
+    float r = sampleR2p();
+
+    float theta, phi;
+
+    // --- sample theta ---
+    while (true) {
+        theta = acos(1.0f - 2.0f * static_cast<float>(rand()) / RAND_MAX); // [0, pi]
+        float prob = pow(sin(theta), 3); // sin^3(theta)
+        if (static_cast<float>(rand()) / RAND_MAX <= prob) break;
+    }
+
+    // --- sample phi ---
+    while (true) {
+        phi = 2.0f * M_PI * static_cast<float>(rand()) / RAND_MAX; // [0, 2pi]
+        float prob = pow(cos(phi), 2); // cos^2(phi)
+        if (static_cast<float>(rand()) / RAND_MAX <= prob) break;
+    }
+
+    vec3 electronPos = engine.sphericalToCartesian(r, theta, phi);
+
+    // Keep one lobe for visualization
+    if (true) {
+        particles.emplace_back(electron_r, vec4(1.0f, 0.0f, 0.0f, 1.0f), electronPos); // red for 2p_x
     }
 }
 
@@ -415,21 +464,43 @@ int main () {
     GLint objectColorLoc = glGetUniformLocation(engine.shaderProgram, "objectColor");
     glUseProgram(engine.shaderProgram);
 
-    //generateElectronCloud(vec3(0, 0, 0),     100.0f, vec3(0.0f, 1.0f, 1.0f), 250);
-    generatePOrbital(     vec3(0, 0, 0),     150.0f, vec3(0.0f, 1.0f, 1.0f), 2500, 'z');
-
+    for (int i = 0; i < 10000; ++i) {
+        sample1s();
+        //sample2s();
+        sample2p_x();
+    }
+    // for(float r = 0.0f; r <= (10.0*a0); r += 1.0f) {
+    //     cout << fixed << setprecision(3); // set 3 decimal places
+    //     cout << "radius = " << r / a0 
+    //         << " a0,       probability of electron = " 
+    //         << radialProbability2p(r) 
+    //         << endl;
+    // }
+    auto lastSampleTime = std::chrono::steady_clock::now();
+    const std::chrono::milliseconds sampleInterval(100); // 0.1s
     while (!glfwWindowShouldClose(engine.window)) {
         engine.run();
         
+        grid.Draw(objectColorLoc);
+
+        // auto now = std::chrono::steady_clock::now();
+        // if (now - lastSampleTime >= sampleInterval) {
+        //     for (int i = 0; i < 2000; ++i) {
+        //         sample1s();
+        //         sample2s();
+        //         sample2p_x();
+        //     }
+        //     lastSampleTime = now;
+        // }
 
         for (auto& p : particles) {
-            grid.Draw(objectColorLoc);
 
             p.Draw(objectColorLoc, modelLoc);
-            //cout<<" Drawing particle at position: ("<<p.position.x<<", "<<p.position.y<<", "<<p.position.z<<") with radius "<<p.radius<<" fm\n";
 
+            
             glDrawArrays(GL_TRIANGLES, 0, p.vertices.size() / 3);
         }
+        //particles.erase(particles.begin() + 1, particles.end()); // Keep nucleus only
 
         glfwSwapBuffers(engine.window);
         glfwPollEvents();

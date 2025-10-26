@@ -12,6 +12,7 @@
 #include <thread>
 #include <chrono>
 #include "../libs/QuickHull/QuickHull.hpp"
+using namespace quickhull;
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -23,7 +24,6 @@ const float eu = 2.71828182845904523536f; // Euler's number
 const float k = 8.9875517923e9f; // Coulomb's constant
 const float a0 = 52.9f; // Bohr radius in pm
 const float electron_r = 1.0f;
-const float fieldRes = 50.0f;
 
 // ================= Engine ================= //
 struct Particle;
@@ -112,13 +112,13 @@ struct Engine {
     // opengl vars
      GLFWwindow* window;
      GLuint shaderProgram;
+     GLuint hullVAO, hullVBO, hullEBO;
 
     // vars - scale
     int WIDTH = 800;  // Window width
     int HEIGHT = 600; // Window height
     float width = 1000.0f; // Width of the viewport in picometers 
     float height = 750.0f; // Height of the viewport in picometers 
-    
 
     Engine () {
         // init glfw
@@ -137,11 +137,6 @@ struct Engine {
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glfwMakeContextCurrent(window);
         glEnable(GL_DEPTH_TEST);
-
-        // Enable alpha blending for transparent objects
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
         // init glew
         glewExperimental = GL_TRUE;
         GLenum glewErr = glewInit();
@@ -232,6 +227,37 @@ struct Engine {
         float z = r * sin(theta) * sin(phi);
         return vec3(x, y, z);
     };
+    // void renderMesh(vector<vec3> hullVertices, vector<int> hullIndices) {
+    //     glGenVertexArrays(1, &hullVAO);
+    //     glGenBuffers(1, &hullVBO);
+    //     glGenBuffers(1, &hullEBO);
+
+    //     glBindVertexArray(hullVAO);
+
+    //     // Vertex buffer
+    //     glBindBuffer(GL_ARRAY_BUFFER, hullVBO);
+    //     glBufferData(GL_ARRAY_BUFFER, hullVertices.size() * sizeof(glm::vec3), hullVertices.data(), GL_STATIC_DRAW);
+
+    //     // Element buffer
+    //     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, hullEBO);
+    //     glBufferData(GL_ELEMENT_ARRAY_BUFFER, hullIndices.size() * sizeof(int), hullIndices.data(), GL_STATIC_DRAW);
+
+    //     // Vertex attribute
+    //     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void*)0);
+    //     glEnableVertexAttribArray(0);
+
+    //     glBindVertexArray(0);
+    // }
+    // void drawMesh(GLuint objectColorLoc, vector<int> hullIndices) {
+    //     glUseProgram(shaderProgram);
+    //     glBindVertexArray(hullVAO);
+    //     glUniform4f(objectColorLoc, 0.3f, 0.6f, 0.9f, 0.5f); // semi-transparent blue
+    //     glm::mat4 model = mat4(1.0f);
+    //     glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, value_ptr(model));
+    //     glDrawElements(GL_TRIANGLES, hullIndices.size(), GL_UNSIGNED_INT, 0);
+    //     glBindVertexArray(0);
+    // }
+
 };
 Engine engine;
 void setupCameraCallbacks(GLFWwindow* window) {
@@ -369,72 +395,6 @@ vector<Particle> particles{
     Particle(8.7f, vec4(1.0f, 0.0f, 0.0f, 1.0f), vec3(0.0f, 0.0f, 0.0f)), // nucleus
 };
 
-// --- ADD: simple Cube type for red cubes ---
-struct Cube {
-    GLuint VAO = 0u, VBO = 0u;
-    vec3 position;
-    vec4 color;
-    vector<float> vertices;
-    float size = 20.0f;        // store size so we can compute bounds
-    int particleCount = 0;     // current cached count
-
-    Cube(vec3 pos, vec4 col, float size_ = 20.0f) : position(pos), color(col), size(size_) {
-        float hs = size * 0.5f;
-        // 12 triangles (36 vertices) for a cube centered at origin
-        vertices = {
-            -hs,-hs,-hs,  hs,-hs,-hs,  hs, hs,-hs,
-             hs, hs,-hs, -hs, hs,-hs, -hs,-hs,-hs,
-
-            -hs,-hs, hs,  hs,-hs, hs,  hs, hs, hs,
-             hs, hs, hs, -hs, hs, hs, -hs,-hs, hs,
-
-            -hs, hs,-hs, -hs, hs, hs, -hs,-hs, hs,
-            -hs,-hs, hs, -hs,-hs,-hs, -hs, hs,-hs,
-
-             hs, hs,-hs,  hs, hs, hs,  hs,-hs, hs,
-             hs,-hs, hs,  hs,-hs,-hs,  hs, hs,-hs,
-
-            -hs,-hs,-hs, -hs,-hs, hs,  hs,-hs, hs,
-             hs,-hs, hs,  hs,-hs,-hs, -hs,-hs,-hs,
-
-            -hs, hs,-hs,  hs, hs,-hs,  hs, hs, hs,
-             hs, hs, hs, -hs, hs, hs, -hs, hs,-hs
-        };
-        engine.CreateVBOVAO(VAO, VBO, vertices.data(), vertices.size());
-    }
-
-    // update particleCount by checking how many particles lie inside the cube bounds
-    void updateParticleCount(const vector<Particle>& particles) {
-        int count = 0;
-        float half = size * 0.5f;
-        float minX = position.x - half, maxX = position.x + half;
-        float minY = position.y - half, maxY = position.y + half;
-        float minZ = position.z - half, maxZ = position.z + half;
-        for (const auto &p : particles) {
-            const vec3 &pos = p.position;
-            if (pos.x >= minX && pos.x < maxX &&
-                pos.y >= minY && pos.y < maxY &&
-                pos.z >= minZ && pos.z < maxZ) {
-                ++count;
-            }
-        }
-        particleCount = count;
-    }
-
-    void Draw(GLint objectColorLoc, GLint modelLoc) {
-        glUniform4f(objectColorLoc, color.r, color.g, color.b, color.a);
-        glm::mat4 model = glm::mat4(1.0f);
-        model = glm::translate(model, position);
-        glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
-        glBindVertexArray(VAO);
-        glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(vertices.size() / 3));
-        glBindVertexArray(0);
-    }
-};
-
-// ADD global cubes container
-vector<Cube> cubes;
-
 float radialProbability1s(float r) {
     float r_bohr = r / a0;
     return 4.0 * r_bohr*r_bohr * exp(-2.0 * r_bohr);
@@ -530,91 +490,91 @@ void sample2p_x() {
     }
 }
 
-// ------------- MAIN -------------- //
+// ================= Main ================= //
 int main () {
     setupCameraCallbacks(engine.window);
     GLint modelLoc = glGetUniformLocation(engine.shaderProgram, "model");
     GLint objectColorLoc = glGetUniformLocation(engine.shaderProgram, "objectColor");
     glUseProgram(engine.shaderProgram);
 
-    // ---- GENERATE PARTICLES ---- //
-    for (int i = 0; i < 10000; ++i) {
-        // sample1s();
-        // //sample2s();
+    // ---- GENERATE PARTICLES ----
+    for (int i = 0; i < 100; ++i) {
+        sample1s();
+        //sample2s();
         sample2p_x();
     }
-
-    for(float x = -500; x < 500; x+=fieldRes){
-        for(float y = -500; y < 500; y+=fieldRes){
-            for(float z = -500; z < 500; z+=fieldRes){
-                // create a small red cube at each grid point
-                cubes.emplace_back(vec3(x, y, z), vec4(1.0f, 0.0f, 0.0f, 0.05f), fieldRes);
-                Cube &c = cubes[cubes.size() - 1];
-                int count = 0;
-                float half = c.size * 0.5f;
-                float minX = c.position.x - half, maxX = c.position.x + half;
-                float minY = c.position.y - half, maxY = c.position.y + half;
-                float minZ = c.position.z - half, maxZ = c.position.z + half;
-
-                for (const auto &p : particles) {
-                    const vec3 &pos = p.position;
-                    if (pos.x >= minX && pos.x < maxX &&
-                        pos.y >= minY && pos.y < maxY &&
-                        pos.z >= minZ && pos.z < maxZ) {
-                        ++count;
-                    }
-                }
-                c.particleCount = count;
-                c.color.a = (count / 500.0f);
-            }
-        }
+    
+    // ---- GENERATE LIST OF POINTS FOR CONVEX HULL ----
+    vector<float> pointData;
+    for (auto& p  : particles) {
+        pointData.push_back(p.position.x);
+        pointData.push_back(p.position.y);
+        pointData.push_back(p.position.z);
     }
+    
+    QuickHull<float> qh;
+    auto hull = qh.getConvexHull(pointData.data(), pointData.size() / 3, true, true, 0.0f);
 
-    // -------- MAIN LOOP -------- //
-    auto lastSampleTime = std::chrono::steady_clock::now();
-    const std::chrono::milliseconds sampleInterval(100); // 0.1s
+    // // ---- RENDER CONVEX HULL ----
+    // // Convert the hull's vertex and index buffers into the types used by the renderer.
+    // vector<vec3> hullVertices;
+    // vector<int> hullIndices;
+    // // getVertexBuffer() and getIndexBuffer() are used by this QuickHull implementation;
+    // // they return contiguous buffers (e.g. floats/doubles for vertices and ints/size_t for indices).
+    // auto vertexBuffer = hull.getVertexBuffer();
+    // auto indexBuffer = hull.getIndexBuffer();
+    // // Convert vertex buffer (Vector3<float> entries) into vec3 list
+    // for (size_t i = 0; i < vertexBuffer.size(); ++i) {
+    //     const auto& v = vertexBuffer[i];
+    //     hullVertices.emplace_back(
+    //         static_cast<float>(v.x),
+    //         static_cast<float>(v.y),
+    //         static_cast<float>(v.z)
+    //     );
+    // }
+    // // Convert index buffer into int list
+    // for (size_t i = 0; i < indexBuffer.size(); ++i) {
+    //     hullIndices.push_back(static_cast<int>(indexBuffer[i]));
+    // }
 
+    // engine.renderMesh(hullVertices, hullIndices);
+
+    auto lastSampleTime = chrono::steady_clock::now();
+    const chrono::milliseconds sampleInterval(100); // 0.1s
     while (!glfwWindowShouldClose(engine.window)) {
         engine.run();
 
-        // ---- DRAW GRID ----
+        // mat4 MVP = mat4(1.0f); // placeholder
+        // glUniformMatrix4fv(glGetUniformLocation(engine.shaderProgram, "MVP"), 1, GL_FALSE, value_ptr(MVP));
+        
+        // Draw Grid
         grid.Draw(objectColorLoc);
 
-        // ---- DRAW PARTICLES ----
+        // Draw Particles
         for (auto& p : particles) {
             p.Draw(objectColorLoc, modelLoc);
             glDrawArrays(GL_TRIANGLES, 0, p.vertices.size() / 3);
         }
 
-        // ---- UPDATE CUBE COUNTS ----
-        for (auto &c : cubes) {
-            c.updateParticleCount(particles);
-        }
+        // // <-- DRAW CONVEX HULL -->
+        // engine.drawMesh(objectColorLoc, hullIndices);
 
-        // ---- DRAW RED CUBES ----
-        // draw transparent cubes back-to-front (simple approach: disable depth writes)
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        glDepthMask(GL_FALSE); // don't write to depth buffer so blending works
-        for (auto& c : cubes) {
-            c.Draw(objectColorLoc, modelLoc);
-        }
-        glDepthMask(GL_TRUE);
-        glDisable(GL_BLEND);
+        glfwSwapBuffers(engine.window);
+        glfwPollEvents();
 
         glfwSwapBuffers(engine.window);
         glfwPollEvents();
     }
 
-    // ---- CLEAN UP ----
+
+    // Cleanup
     for (auto& p : particles) {
         glDeleteVertexArrays(1, &p.VAO);
         glDeleteBuffers(1, &p.VBO);
     }
-    for (auto& c : cubes) {
-        glDeleteVertexArrays(1, &c.VAO);
-        glDeleteBuffers(1, &c.VBO);
-    }
+    glDeleteVertexArrays(1, &engine.hullVAO);
+    glDeleteBuffers(1, &engine.hullVBO);
+    glDeleteBuffers(1, &engine.hullEBO);
     glfwDestroyWindow(engine.window);
     glfwTerminate();
     return 0;

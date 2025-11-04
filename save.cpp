@@ -12,7 +12,7 @@
 #include <thread>
 #include <chrono>
 #include "../libs/QuickHull/QuickHull.hpp"
-using namespace quickhull;
+#include <unordered_map>
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -24,6 +24,7 @@ const float eu = 2.71828182845904523536f; // Euler's number
 const float k = 8.9875517923e9f; // Coulomb's constant
 const float a0 = 52.9f; // Bohr radius in pm
 const float electron_r = 1.0f;
+const float fieldRes = 10.0f;
 
 // ================= Engine ================= //
 struct Particle;
@@ -112,13 +113,13 @@ struct Engine {
     // opengl vars
      GLFWwindow* window;
      GLuint shaderProgram;
-     GLuint hullVAO, hullVBO, hullEBO;
 
     // vars - scale
     int WIDTH = 800;  // Window width
     int HEIGHT = 600; // Window height
     float width = 1000.0f; // Width of the viewport in picometers 
     float height = 750.0f; // Height of the viewport in picometers 
+    
 
     Engine () {
         // init glfw
@@ -137,6 +138,11 @@ struct Engine {
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glfwMakeContextCurrent(window);
         glEnable(GL_DEPTH_TEST);
+
+        // Enable alpha blending for transparent objects
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
         // init glew
         glewExperimental = GL_TRUE;
         GLenum glewErr = glewInit();
@@ -227,37 +233,6 @@ struct Engine {
         float z = r * sin(theta) * sin(phi);
         return vec3(x, y, z);
     };
-    // void renderMesh(vector<vec3> hullVertices, vector<int> hullIndices) {
-    //     glGenVertexArrays(1, &hullVAO);
-    //     glGenBuffers(1, &hullVBO);
-    //     glGenBuffers(1, &hullEBO);
-
-    //     glBindVertexArray(hullVAO);
-
-    //     // Vertex buffer
-    //     glBindBuffer(GL_ARRAY_BUFFER, hullVBO);
-    //     glBufferData(GL_ARRAY_BUFFER, hullVertices.size() * sizeof(glm::vec3), hullVertices.data(), GL_STATIC_DRAW);
-
-    //     // Element buffer
-    //     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, hullEBO);
-    //     glBufferData(GL_ELEMENT_ARRAY_BUFFER, hullIndices.size() * sizeof(int), hullIndices.data(), GL_STATIC_DRAW);
-
-    //     // Vertex attribute
-    //     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void*)0);
-    //     glEnableVertexAttribArray(0);
-
-    //     glBindVertexArray(0);
-    // }
-    // void drawMesh(GLuint objectColorLoc, vector<int> hullIndices) {
-    //     glUseProgram(shaderProgram);
-    //     glBindVertexArray(hullVAO);
-    //     glUniform4f(objectColorLoc, 0.3f, 0.6f, 0.9f, 0.5f); // semi-transparent blue
-    //     glm::mat4 model = mat4(1.0f);
-    //     glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, value_ptr(model));
-    //     glDrawElements(GL_TRIANGLES, hullIndices.size(), GL_UNSIGNED_INT, 0);
-    //     glBindVertexArray(0);
-    // }
-
 };
 Engine engine;
 void setupCameraCallbacks(GLFWwindow* window) {
@@ -395,6 +370,54 @@ vector<Particle> particles{
     Particle(8.7f, vec4(1.0f, 0.0f, 0.0f, 1.0f), vec3(0.0f, 0.0f, 0.0f)), // nucleus
 };
 
+// --- ADD: simple Cube type for red cubes ---
+struct Cube {
+    GLuint VAO = 0u, VBO = 0u;
+    vec3 position;
+    vec4 color;
+    vector<float> vertices;
+    float size = 20.0f;        // store size so we can compute bounds
+    int particleCount = 0;     // current cached count
+
+    Cube(vec3 pos, vec4 col, float size_ = 20.0f) : position(pos), color(col), size(size_) {
+        float hs = size * 0.5f;
+        // 12 triangles (36 vertices) for a cube centered at origin
+        vertices = {
+            -hs,-hs,-hs,  hs,-hs,-hs,  hs, hs,-hs,
+             hs, hs,-hs, -hs, hs,-hs, -hs,-hs,-hs,
+
+            -hs,-hs, hs,  hs,-hs, hs,  hs, hs, hs,
+             hs, hs, hs, -hs, hs, hs, -hs,-hs, hs,
+
+            -hs, hs,-hs, -hs, hs, hs, -hs,-hs, hs,
+            -hs,-hs, hs, -hs,-hs,-hs, -hs, hs,-hs,
+
+             hs, hs,-hs,  hs, hs, hs,  hs,-hs, hs,
+             hs,-hs, hs,  hs,-hs,-hs,  hs, hs,-hs,
+
+            -hs,-hs,-hs, -hs,-hs, hs,  hs,-hs, hs,
+             hs,-hs, hs,  hs,-hs,-hs, -hs,-hs,-hs,
+
+            -hs, hs,-hs,  hs, hs,-hs,  hs, hs, hs,
+             hs, hs, hs, -hs, hs, hs, -hs, hs,-hs
+        };
+        engine.CreateVBOVAO(VAO, VBO, vertices.data(), vertices.size());
+    }
+
+    void Draw(GLint objectColorLoc, GLint modelLoc) {
+        glUniform4f(objectColorLoc, color.r, color.g, color.b, color.a);
+        glm::mat4 model = glm::mat4(1.0f);
+        model = glm::translate(model, position);
+        glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+        glBindVertexArray(VAO);
+        glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(vertices.size() / 3));
+        glBindVertexArray(0);
+    }
+};
+
+// ADD global cubes container
+vector<Cube> cubes;
+
 float radialProbability1s(float r) {
     float r_bohr = r / a0;
     return 4.0 * r_bohr*r_bohr * exp(-2.0 * r_bohr);
@@ -486,95 +509,170 @@ void sample2p_x() {
 
     // Keep one lobe for visualization
     if (true) {
-        particles.emplace_back(electron_r, vec4(1.0f, 0.0f, 0.0f, 1.0f), electronPos); // red for 2p_x
+        particles.emplace_back(electron_r, vec4(1.0f, 1.0f, 1.0f, 1.0f), electronPos); // red for 2p_x
     }
 }
+void sample2p_y() {
+    float r = sampleR2p();
 
-// ================= Main ================= //
+    float theta, phi;
+
+    // --- sample theta ---
+    while (true) {
+        theta = acos(1.0f - 2.0f * static_cast<float>(rand()) / RAND_MAX); // [0, pi]
+        float prob = pow(sin(theta), 3); // sin^3(theta)
+        if (static_cast<float>(rand()) / RAND_MAX <= prob) break;
+    }
+
+    // --- sample phi --- (changed to sin^2 to orient along Y axis)
+    while (true) {
+        phi = 2.0f * M_PI * static_cast<float>(rand()) / RAND_MAX; // [0, 2pi]
+        float prob = pow(sin(phi), 2); // sin^2(phi) -> aligns lobes along Y
+        if (static_cast<float>(rand()) / RAND_MAX <= prob) break;
+    }
+
+    vec3 electronPos = engine.sphericalToCartesian(r, theta, phi);
+
+    // Keep one lobe for visualization
+    if (true) {
+        particles.emplace_back(electron_r, vec4(1.0f, 0.0f, 1.0f, 1.0f), electronPos); // red for 2p_y (keeps existing color)
+    }
+}
+void sample2p_z() {
+    float r = sampleR2p();
+    float theta, phi;
+
+    // --- sample theta --- (weight with cos^2 to align lobes along Z)
+    while (true) {
+        theta = acos(1.0f - 2.0f * static_cast<float>(rand()) / RAND_MAX); // [0, pi]
+        float prob = pow(cos(theta), 2); // cos^2(theta)
+        if (static_cast<float>(rand()) / RAND_MAX <= prob) break;
+    }
+
+    // --- sample phi --- (uniform)
+    phi = 2.0f * M_PI * static_cast<float>(rand()) / RAND_MAX; // [0, 2pi]
+
+    vec3 electronPos = engine.sphericalToCartesian(r, theta, phi);
+
+    // Keep one lobe for visualization
+    particles.emplace_back(electron_r, vec4(0.0f, 1.0f, 1.0f, 1.0f), electronPos); // red for 2p_z
+}
+
+// ------------- MAIN -------------- //
 int main () {
     setupCameraCallbacks(engine.window);
     GLint modelLoc = glGetUniformLocation(engine.shaderProgram, "model");
     GLint objectColorLoc = glGetUniformLocation(engine.shaderProgram, "objectColor");
     glUseProgram(engine.shaderProgram);
 
-    // ---- GENERATE PARTICLES ----
-    for (int i = 0; i < 100; ++i) {
-        sample1s();
-        //sample2s();
+    // ---- GENERATE PARTICLES ---- //
+    for (int i = 0; i < 1000; ++i) {
+        // sample1s();
+        // //sample2s();
         sample2p_x();
+        sample2p_y();
+        sample2p_z();
     }
-    
-    // ---- GENERATE LIST OF POINTS FOR CONVEX HULL ----
-    vector<float> pointData;
-    for (auto& p  : particles) {
-        pointData.push_back(p.position.x);
-        pointData.push_back(p.position.y);
-        pointData.push_back(p.position.z);
+
+    for(float x = -500; x < 500; x+=fieldRes){
+        for(float y = -500; y < 500; y+=fieldRes){
+            for(float z = -500; z < 500; z+=fieldRes){
+                // create a small red cube at each grid point
+                cubes.emplace_back(vec3(x, y, z), vec4(1.0f, 0.0f, 0.0f, 0.05f), fieldRes);
+                Cube &c = cubes[cubes.size() - 1];
+                int count = 0;
+                float half = c.size * 0.5f;
+                float minX = c.position.x - half, maxX = c.position.x + half;
+                float minY = c.position.y - half, maxY = c.position.y + half;
+                float minZ = c.position.z - half, maxZ = c.position.z + half;
+
+                std::unordered_map<uint32_t, int> colorCounts;
+                for (const auto &p : particles) {
+                    const vec3 &pos = p.position;
+                    if (pos.x >= minX && pos.x < maxX &&
+                        pos.y >= minY && pos.y < maxY &&
+                        pos.z >= minZ && pos.z < maxZ) {
+                        int r = int(p.color.r * 255.0f + 0.5f); r = std::max(0, std::min(255, r));
+                        int g = int(p.color.g * 255.0f + 0.5f); g = std::max(0, std::min(255, g));
+                        int b = int(p.color.b * 255.0f + 0.5f); b = std::max(0, std::min(255, b));
+                        int a = int(p.color.a * 255.0f + 0.5f); a = std::max(0, std::min(255, a));
+                        uint32_t key = (uint32_t(r) << 24) | (uint32_t(g) << 16) | (uint32_t(b) << 8) | uint32_t(a);
+                        colorCounts[key] += 1;
+                        ++count;
+                    }
+                }
+                c.particleCount = count;
+
+                // choose majority color (if any)
+                if (count > 0) {
+                    uint32_t bestKey = 0;
+                    int bestCount = 0;
+                    for (auto &kv : colorCounts) {
+                        if (kv.second > bestCount) {
+                            bestCount = kv.second;
+                            bestKey = kv.first;
+                        }
+                    }
+                    // unpack bytes back into normalized vec4
+                    int br = (bestKey >> 24) & 0xFF;
+                    int bg = (bestKey >> 16) & 0xFF;
+                    int bb = (bestKey >> 8) & 0xFF;
+                    int ba = (bestKey) & 0xFF;
+                    c.color = vec4(br / 255.0f, bg / 255.0f, bb / 255.0f, ba / 255.0f);
+
+                    // optionally scale alpha by density (keeps majority RGB)
+                    // float alphaFromCount = std::min(1.0f, count / 500.0f);
+                    // c.color.a = std::max(c.color.a, alphaFromCount);
+                } else {
+                    // empty cube: keep default low-alpha red
+                    c.color = vec4(1.0f, 0.0f, 0.0f, 0.05f);
+                }
+                
+                c.color.a = (count / 500.0f);
+            }
+        }
     }
-    
-    QuickHull<float> qh;
-    auto hull = qh.getConvexHull(pointData.data(), pointData.size() / 3, true, true, 0.0f);
 
-    // // ---- RENDER CONVEX HULL ----
-    // // Convert the hull's vertex and index buffers into the types used by the renderer.
-    // vector<vec3> hullVertices;
-    // vector<int> hullIndices;
-    // // getVertexBuffer() and getIndexBuffer() are used by this QuickHull implementation;
-    // // they return contiguous buffers (e.g. floats/doubles for vertices and ints/size_t for indices).
-    // auto vertexBuffer = hull.getVertexBuffer();
-    // auto indexBuffer = hull.getIndexBuffer();
-    // // Convert vertex buffer (Vector3<float> entries) into vec3 list
-    // for (size_t i = 0; i < vertexBuffer.size(); ++i) {
-    //     const auto& v = vertexBuffer[i];
-    //     hullVertices.emplace_back(
-    //         static_cast<float>(v.x),
-    //         static_cast<float>(v.y),
-    //         static_cast<float>(v.z)
-    //     );
-    // }
-    // // Convert index buffer into int list
-    // for (size_t i = 0; i < indexBuffer.size(); ++i) {
-    //     hullIndices.push_back(static_cast<int>(indexBuffer[i]));
-    // }
+    // -------- MAIN LOOP -------- //
+    auto lastSampleTime = std::chrono::steady_clock::now();
+    const std::chrono::milliseconds sampleInterval(100); // 0.1s
 
-    // engine.renderMesh(hullVertices, hullIndices);
-
-    auto lastSampleTime = chrono::steady_clock::now();
-    const chrono::milliseconds sampleInterval(100); // 0.1s
     while (!glfwWindowShouldClose(engine.window)) {
         engine.run();
 
-        // mat4 MVP = mat4(1.0f); // placeholder
-        // glUniformMatrix4fv(glGetUniformLocation(engine.shaderProgram, "MVP"), 1, GL_FALSE, value_ptr(MVP));
-        
-        // Draw Grid
+        // ---- DRAW GRID ----
         grid.Draw(objectColorLoc);
 
-        // Draw Particles
+        // ---- DRAW PARTICLES ----
         for (auto& p : particles) {
             p.Draw(objectColorLoc, modelLoc);
             glDrawArrays(GL_TRIANGLES, 0, p.vertices.size() / 3);
         }
 
-        // // <-- DRAW CONVEX HULL -->
-        // engine.drawMesh(objectColorLoc, hullIndices);
-
-        glfwSwapBuffers(engine.window);
-        glfwPollEvents();
+        // ---- DRAW RED CUBES ----
+        // draw transparent cubes back-to-front (simple approach: disable depth writes)
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glDepthMask(GL_FALSE); // don't write to depth buffer so blending works
+        for (auto& c : cubes) {
+            c.Draw(objectColorLoc, modelLoc);
+        }
+        glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND);
 
         glfwSwapBuffers(engine.window);
         glfwPollEvents();
     }
 
-
-    // Cleanup
+    // ---- CLEAN UP ----
     for (auto& p : particles) {
         glDeleteVertexArrays(1, &p.VAO);
         glDeleteBuffers(1, &p.VBO);
     }
-    glDeleteVertexArrays(1, &engine.hullVAO);
-    glDeleteBuffers(1, &engine.hullVBO);
-    glDeleteBuffers(1, &engine.hullEBO);
+    for (auto& c : cubes) {
+        glDeleteVertexArrays(1, &c.VAO);
+        glDeleteBuffers(1, &c.VBO);
+    }
     glfwDestroyWindow(engine.window);
     glfwTerminate();
     return 0;

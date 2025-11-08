@@ -22,7 +22,7 @@ const float c = 299792458.0f / 100000000.0f;    // speed of light in m/s
 const float eu = 2.71828182845904523536f; // Euler's number
 const float k = 8.9875517923e9f; // Coulomb's constant
 const float a0 = 52.9f; // Bohr radius in pm
-const float electron_r = 1.0f;
+const float electron_r = 2.0f;
 const float fieldRes = 25.0f;
 
 // ================= Engine ================= //
@@ -336,8 +336,9 @@ struct Particle {
     vec4 color; // RGB values between 0 and 1
     vec3 position; // in picometers
     vector<float> vertices = DrawSphere();
+    string orbital = "";
 
-    Particle(float r, vec4 col, vec3 pos) : radius(r), color(col), position(pos) {
+    Particle(float r, vec4 col, vec3 pos, string orbit = "") : radius(r), color(col), position(pos), orbital(orbit) {
         engine.CreateVBOVAO(VAO, VBO, vertices.data(), vertices.size());
     }
     void Draw (GLint objectColorLoc, GLint modelLoc) {
@@ -517,7 +518,7 @@ void sample1s() {   // change return type to void
     
     // Construct Particle in-place
     if (electronPos.z > 0 || electronPos.y < 0) {
-    particles.emplace_back(electron_r, vec4(0.0f, 1.0f, 1.0f, 1.0f), electronPos); // cyan-ish color
+        particles.emplace_back(electron_r, vec4(0.0f, 1.0f, 1.0f, 1.0f), electronPos, "1s"); // cyan-ish color
     }
 }
 void sample2s() {
@@ -529,7 +530,7 @@ void sample2s() {
 
     // Use a distinct color for visualization, e.g. yellow for 2s
     if (electronPos.z > 0 || electronPos.y < 0) {
-    particles.emplace_back(electron_r, vec4(0.0f, 1.0f, 1.0f, 1.0f), electronPos); // cyan-ish color
+    particles.emplace_back(electron_r, vec4(0.0f, 1.0f, 1.0f, 1.0f), electronPos, "2s"); // cyan-ish color
     }
 }
 void sample2p_x() {
@@ -555,7 +556,7 @@ void sample2p_x() {
 
     // Keep one lobe for visualization
     if (electronPos.z > 0 || electronPos.y < 0) {
-        particles.emplace_back(electron_r, vec4(1.0f, 0.0f, 0.0f, 1.0f), electronPos); // red for 2p_x
+        particles.emplace_back(electron_r, vec4(1.0f, 0.0f, 0.0f, 1.0f), electronPos, "2p_x"); // red for 2p_x
     }
 }
 void sample2p_y() {
@@ -581,7 +582,7 @@ void sample2p_y() {
 
     // Keep one lobe for visualization
     if (true) {
-        particles.emplace_back(electron_r, vec4(1.0f, 0.0f, 1.0f, 1.0f), electronPos); // red for 2p_y (keeps existing color)
+        particles.emplace_back(electron_r, vec4(1.0f, 0.0f, 1.0f, 1.0f), electronPos, "2p_y"); // red for 2p_y (keeps existing color)
     }
 }
 void sample2p_z() {
@@ -601,7 +602,7 @@ void sample2p_z() {
     vec3 electronPos = engine.sphericalToCartesian(r, theta, phi);
 
     // Keep one lobe for visualization
-    particles.emplace_back(electron_r, vec4(0.0f, 1.0f, 1.0f, 1.0f), electronPos); // red for 2p_z
+    particles.emplace_back(electron_r, vec4(0.0f, 1.0f, 1.0f, 1.0f), electronPos, "2p_z"); // red for 2p_z
 }
 
 void sample3p_z() {
@@ -621,7 +622,7 @@ void sample3p_z() {
     vec3 electronPos = engine.sphericalToCartesian(r, theta, phi);
 
     // visualize (different color for 3p_z)
-    particles.emplace_back(electron_r, vec4(1.0f, 0.0f, 0.0f, 1.0f), electronPos); // cyan-ish for 3p_z
+    particles.emplace_back(electron_r, vec4(1.0f, 0.0f, 0.0f, 1.0f), electronPos, "3p_z"); // cyan-ish for 3p_z
 }
 // ================= Main ================= //
 int main () {
@@ -635,7 +636,7 @@ int main () {
         //sample1s();
         //sample2s();
         //sample2p_x();
-        sample2p_y();
+        //sample2p_y();
         //sample2p_z();
         //sample3p_z();
     }
@@ -670,24 +671,56 @@ int main () {
     auto lastSampleTime = std::chrono::steady_clock::now();
     const std::chrono::milliseconds sampleInterval(100); // 0.1s
 
+    float maxRad1s = 0.0f;
+    float maxRad2s = 0.0f;
     while (!glfwWindowShouldClose(engine.window)) {
+        //maxRad1s = 0.0f;
+        //maxRad2s = 0.0f;
         engine.run();
 
         // ---- DRAW GRID ----
         grid.Draw(objectColorLoc);
 
-        // sample1s();
-        // sample1s();
-        // sample2s();
-        // sample2s();
-        // sample2p_y();
-        // sample2p_y();
+        sample1s();
+        sample1s();
+        sample2s();
+        sample2s();
+        sample2p_y();
+        sample2p_y();
 
         // ---- DRAW PARTICLES ----
         for (auto& p : particles) {
             p.Draw(objectColorLoc, modelLoc);
             glDrawArrays(GL_TRIANGLES, 0, p.vertices.size() / 3);
+            if (p.orbital == "1s") {
+                float r = length(p.position);
+                if (r > maxRad1s) {
+                    maxRad1s = r;
+                }
+            }
+            if (p.orbital == "2s") {
+                float r = length(p.position);
+                if (r > maxRad2s) {
+                    maxRad2s = r;
+                }
+            }
         }
+        //cout<< "Particles: " << particles.size() << " | Max 1s radius: " << maxRad1s << " pm\r" << flush;
+
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glDepthMask(GL_FALSE); // disable depth writes for transparency
+
+        
+        Particle orbital = Particle(maxRad1s, vec4(1.0f, 1.0f, 0.0f, 0.05f), vec3(0.0f, 0.0f, 0.0f));
+        orbital.Draw(objectColorLoc, modelLoc);
+        glDrawArrays(GL_TRIANGLES, 0, orbital.vertices.size() / 3);
+        glBindVertexArray(0);
+
+        Particle orbital2 = Particle(maxRad2s, vec4(0.0f, 1.0f, 1.0f, 0.05f), vec3(0.0f, 0.0f, 0.0f));
+        orbital2.Draw(objectColorLoc, modelLoc);
+        glDrawArrays(GL_TRIANGLES, 1, orbital2.vertices.size() / 3);
+        glBindVertexArray(1);
 
         // ---- DRAW RED CUBES ----
         // draw transparent cubes back-to-front (simple approach: disable depth writes)
@@ -701,11 +734,11 @@ int main () {
         glDepthMask(GL_TRUE);
         glDisable(GL_BLEND);
         // ---- UPDATE CUBE COUNTS ----
-        // for (auto &c : cubes) {
-        //     c.updateParticleCount(particles);
-        // }
+        for (auto &c : cubes) {
+            c.updateParticleCount(particles);
+        }
 
-        //particles.erase(particles.begin() + 1, particles.end());
+        particles.erase(particles.begin() + 1, particles.end());
 
         glfwSwapBuffers(engine.window);
         glfwPollEvents();

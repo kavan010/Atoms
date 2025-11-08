@@ -12,18 +12,20 @@
 #include <thread>
 #include <chrono>
 #include "../libs/QuickHull/QuickHull.hpp"
+#include <unordered_map>
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 using namespace glm;
 using namespace std;
 
+// ================= Vars ================= //
 const float c = 299792458.0f / 100000000.0f;    // speed of light in m/s
 const float eu = 2.71828182845904523536f; // Euler's number
 const float k = 8.9875517923e9f; // Coulomb's constant
 const float a0 = 52.9f; // Bohr radius in pm
-const float electron_r = 1.0f;
-const float fieldRes = 25.0f;
+const float electron_r = 5.0f;
+const float fieldRes = 10.0f;
 
 // ================= Engine ================= //
 struct Particle;
@@ -106,7 +108,6 @@ struct Camera {
 
 };
 Camera camera;
-
 
 struct Engine {
 
@@ -265,6 +266,9 @@ void setupCameraCallbacks(GLFWwindow* window) {
         cam->processScroll(xoffset, yoffset);
     });
 }
+// density field
+vector<int> density(engine.WIDTH * engine.HEIGHT, 0);
+
 // ================= Objects ================= //
 struct Grid {
     GLuint gridVAO, gridVBO;
@@ -382,71 +386,6 @@ vector<Particle> particles{
     Particle(8.7f, vec4(1.0f, 0.0f, 0.0f, 1.0f), vec3(0.0f, 0.0f, 0.0f)), // nucleus
 };
 
-// --- ADD: simple Cube type for red cubes ---
-struct Cube {
-    GLuint VAO = 0u, VBO = 0u;
-    vec3 position;
-    vec4 color;
-    vector<float> vertices;
-    float size = 20.0f;        // store size so we can compute bounds
-    int particleCount = 0;     // current cached count
-
-    Cube(vec3 pos, vec4 col, float size_ = 20.0f) : position(pos), color(col), size(size_) {
-        float hs = size * 0.5f;
-        // 12 triangles (36 vertices) for a cube centered at origin
-        vertices = {
-            -hs,-hs,-hs,  hs,-hs,-hs,  hs, hs,-hs,
-             hs, hs,-hs, -hs, hs,-hs, -hs,-hs,-hs,
-
-            -hs,-hs, hs,  hs,-hs, hs,  hs, hs, hs,
-             hs, hs, hs, -hs, hs, hs, -hs,-hs, hs,
-
-            -hs, hs,-hs, -hs, hs, hs, -hs,-hs, hs,
-            -hs,-hs, hs, -hs,-hs,-hs, -hs, hs,-hs,
-
-             hs, hs,-hs,  hs, hs, hs,  hs,-hs, hs,
-             hs,-hs, hs,  hs,-hs,-hs,  hs, hs,-hs,
-
-            -hs,-hs,-hs, -hs,-hs, hs,  hs,-hs, hs,
-             hs,-hs, hs,  hs,-hs,-hs, -hs,-hs,-hs,
-
-            -hs, hs,-hs,  hs, hs,-hs,  hs, hs, hs,
-             hs, hs, hs, -hs, hs, hs, -hs, hs,-hs
-        };
-        engine.CreateVBOVAO(VAO, VBO, vertices.data(), vertices.size());
-    }
-
-    // update particleCount by checking how many particles lie inside the cube bounds
-    void updateParticleCount(const vector<Particle>& particles) {
-        int count = 0;
-        float half = size * 0.5f;
-        float minX = position.x - half, maxX = position.x + half;
-        float minY = position.y - half, maxY = position.y + half;
-        float minZ = position.z - half, maxZ = position.z + half;
-        for (const auto &p : particles) {
-            const vec3 &pos = p.position;
-            if (pos.x >= minX && pos.x < maxX &&
-                pos.y >= minY && pos.y < maxY &&
-                pos.z >= minZ && pos.z < maxZ) {
-                ++count;
-            }
-        }
-        particleCount = count;
-    }
-
-    void Draw(GLint objectColorLoc, GLint modelLoc) {
-        glUniform4f(objectColorLoc, color.r, color.g, color.b, color.a);
-        glm::mat4 model = glm::mat4(1.0f);
-        model = glm::translate(model, position);
-        glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
-        glBindVertexArray(VAO);
-        glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(vertices.size() / 3));
-        glBindVertexArray(0);
-    }
-};
-
-// ADD global cubes container
-vector<Cube> cubes;
 
 // ================= Probability functions ================= //
 float radialProbability1s(float r) {
@@ -621,7 +560,7 @@ void sample3p_z() {
     vec3 electronPos = engine.sphericalToCartesian(r, theta, phi);
 
     // visualize (different color for 3p_z)
-    particles.emplace_back(electron_r, vec4(1.0f, 0.0f, 0.0f, 1.0f), electronPos); // cyan-ish for 3p_z
+    particles.emplace_back(electron_r, vec4(0.0f, 1.0f, 1.0f, 1.0f), electronPos); // cyan-ish for 3p_z
 }
 // ================= Main ================= //
 int main () {
@@ -639,88 +578,101 @@ int main () {
         //sample2p_z();
         //sample3p_z();
     }
-
-    for(float x = -500; x < 500; x+=fieldRes){
-        for(float y = -500; y < 500; y+=fieldRes){
-            for(float z = -500; z < 500; z+=fieldRes){
-                // create a small red cube at each grid point
-                cubes.emplace_back(vec3(x, y, z), vec4(1.0f, 0.0f, 0.0f, 0.05f), fieldRes);
-                Cube &c = cubes[cubes.size() - 1];
-                int count = 0;
-                float half = c.size * 0.5f;
-                float minX = c.position.x - half, maxX = c.position.x + half;
-                float minY = c.position.y - half, maxY = c.position.y + half;
-                float minZ = c.position.z - half, maxZ = c.position.z + half;
-
-                for (const auto &p : particles) {
-                    const vec3 &pos = p.position;
-                    if (pos.x >= minX && pos.x < maxX &&
-                        pos.y >= minY && pos.y < maxY &&
-                        pos.z >= minZ && pos.z < maxZ) {
-                        ++count;
-                    }
-                }
-                c.particleCount = count;
-                c.color.a = (count / 50.0f);
-            }
-        }
-    }
-
-    // -------- MAIN LOOP -------- //
-    auto lastSampleTime = std::chrono::steady_clock::now();
-    const std::chrono::milliseconds sampleInterval(100); // 0.1s
-
+    
+    int blockSize = 3; // must match your draw block size
+    int blocksPerRow = (engine.WIDTH + blockSize - 1) / blockSize;
+    int blocksPerCol = (engine.HEIGHT + blockSize - 1) / blockSize;
+    fill(density.begin(), density.end(), 0); // clear before use
     while (!glfwWindowShouldClose(engine.window)) {
         engine.run();
+        fill(density.begin(), density.end(), 0);
 
         // ---- DRAW GRID ----
         grid.Draw(objectColorLoc);
 
-        // sample1s();
-        // sample1s();
-        // sample2s();
-        // sample2s();
-        // sample2p_y();
-        // sample2p_y();
+        // ---- DRAW 3D PARTICLES ----
+        mat4 view = lookAt(camera.position(), camera.target, vec3(0,1,0));
+        mat4 projection = perspective(radians(45.0f), float(engine.WIDTH)/engine.HEIGHT, 0.1f, 10000.0f);
 
-        // ---- DRAW PARTICLES ----
-        for (auto& p : particles) {
-            p.Draw(objectColorLoc, modelLoc);
-            glDrawArrays(GL_TRIANGLES, 0, p.vertices.size() / 3);
+        for (const auto& p : particles) {
+            vec4 clipSpacePos = projection * view * vec4(p.position, 1.0f);
+            if (clipSpacePos.w <= 0.0f) continue; // behind camera
+            vec3 ndc = vec3(clipSpacePos) / clipSpacePos.w; // normalize
+            int x_pixel = int((ndc.x * 0.5f + 0.5f) * engine.WIDTH);
+            int y_pixel = int((1.0f - (ndc.y * 0.5f + 0.5f)) * engine.HEIGHT);
+            if (x_pixel >= 0 && x_pixel < engine.WIDTH && y_pixel >= 0 && y_pixel < engine.HEIGHT) {
+                density[y_pixel * engine.WIDTH + x_pixel] += 1;
+            }
         }
 
-        // ---- DRAW RED CUBES ----
-        // draw transparent cubes back-to-front (simple approach: disable depth writes)
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        glDepthMask(GL_FALSE); // don't write to depth buffer so blending works
-        for (auto& c : cubes) {
-            //c.color.a = c.particleCount;
-            c.Draw(objectColorLoc, modelLoc);
-        }
-        glDepthMask(GL_TRUE);
-        glDisable(GL_BLEND);
-        // ---- UPDATE CUBE COUNTS ----
-        // for (auto &c : cubes) {
-        //     c.updateParticleCount(particles);
-        // }
+        engine.SwitchTo2DRendering();
+        // ---- DRAW DENSITY POINTS IN 2D ----
+        for (int by = 0; by < engine.HEIGHT; by += blockSize) {
+            for (int bx = 0; bx < engine.WIDTH; bx += blockSize) {
 
-        //particles.erase(particles.begin() + 1, particles.end());
+                int sum = 0;
+                int count = 0;
+
+                // sum up all densities in this block
+                for (int y = by; y < by + blockSize && y < engine.HEIGHT; ++y) {
+                    for (int x = bx; x < bx + blockSize && x < engine.WIDTH; ++x) {
+                        count += density[y * engine.WIDTH + x];
+                    }
+                }
+
+                if (count == 0) continue;
+
+                if (count > 0.0f) {
+                    // alpha represents brightness/density
+                    float alpha = count / 2.5f;
+
+                    // bluish color based on density
+                    // Normalize density to [0,1] for color mapping
+alpha = clamp(alpha, 0.0f, 1.0f); // ensure t is in [0,1]
+    
+    glm::vec3 color;
+
+    if (alpha < 0.5f) {
+        // interpolate from yellow to orange/red
+        float f = alpha / 0.5f; // 0 -> 0, 0.5 -> 1
+        color = glm::vec3(
+            1.0f,              // R stays at 1
+            1.0f - 0.5f * f,   // G: 1 -> 0.5
+            0.0f                // B stays at 0
+        );
+    } else {
+        // interpolate from orange/red to purple
+        float f = (alpha - 0.5f) / 0.5f; // 0.5 -> 0, 1 -> 1
+        color = glm::vec3(
+            1.0f - 0.5f * f,   // R: 1 -> 0.5
+            0.5f * (1 - f),    // G: 0.5 -> 0
+            0.0f + 0.5f * f    // B: 0 -> 0.5
+        );
+    }
+glUniform4f(objectColorLoc, color.r, color.g, color.b, 1.0f);
+
+                    // position at the center of the block
+                    float cx = bx + blockSize / 2.0f;
+                    float cy = by + blockSize / 2.0f;
+
+                    // invert Y for OpenGL
+                    glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(cx, float(engine.HEIGHT - cy), 0.0f));
+                    model = glm::scale(model, glm::vec3(1.0f));
+
+                    glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+
+                    // make sure points are big enough to see
+                    glPointSize((float)blockSize);
+
+                    glDrawArrays(GL_POINTS, 0, 1);
+                }
+            }
+        }
 
         glfwSwapBuffers(engine.window);
         glfwPollEvents();
     }
 
-    // ---- CLEAN UP ----
-    for (auto& p : particles) {
-        glDeleteVertexArrays(1, &p.VAO);
-        glDeleteBuffers(1, &p.VBO);
-    }
-    for (auto& c : cubes) {
-        glDeleteVertexArrays(1, &c.VAO);
-        glDeleteBuffers(1, &c.VBO);
-    }
-    glfwDestroyWindow(engine.window);
-    glfwTerminate();
+    
     return 0;
 }

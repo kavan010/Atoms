@@ -418,6 +418,8 @@ struct Cube {
 // ADD global cubes container
 vector<Cube> cubes;
 
+
+// ================= Probability functions ================= //
 float radialProbability1s(float r) {
     float r_bohr = r / a0;
     return 4.0 * r_bohr*r_bohr * exp(-2.0 * r_bohr);
@@ -430,6 +432,11 @@ float radialProbability2s(float r) {
 float radialProbability2p(float r) {
     float r_bohr = r / a0;  // convert to Bohr radii
     return (pow(r_bohr, 4) / 24.0f) * exp(-r_bohr);
+}
+float radialProbability3p(float r) {
+    float x = r / a0;
+    float R = x * (1.0f - x / 6.0f) * exp(-x / 3.0f);
+    return R * R * r * r; // multiply by r^2 for probability density
 }
 
 float sampleR1s() {
@@ -462,6 +469,16 @@ float sampleR2p() {
         if (y <= radialProbability2p(r)) return r;
     }
 }
+float sampleR3p() {
+    float r_max = 25.0f * a0; // 3p orbitals extend farther than 2p
+    float P_max = radialProbability3p(8.0f * a0); // estimate peak around ~8a0
+
+    while (true) {
+        float r = static_cast<float>(rand()) / RAND_MAX * r_max;
+        float y = static_cast<float>(rand()) / RAND_MAX * P_max;
+        if (y <= radialProbability3p(r)) return r;
+    }
+}
 
 void sample1s() {   // change return type to void
     float r = sampleR1s();
@@ -470,8 +487,8 @@ void sample1s() {   // change return type to void
     vec3 electronPos = engine.sphericalToCartesian(r, theta, phi);
     
     // Construct Particle in-place
-    if (true) {
-    particles.emplace_back(electron_r, vec4(1.0f, 1.0f, 1.0f, 1.0f), electronPos); // cyan-ish color
+    if (electronPos.z > 0 || electronPos.y < 0) {
+    particles.emplace_back(electron_r, vec4(0.0f, 1.0f, 1.0f, 1.0f), electronPos); // cyan-ish color
     }
 }
 void sample2s() {
@@ -482,7 +499,7 @@ void sample2s() {
     vec3 electronPos = engine.sphericalToCartesian(r, theta, phi);
 
     // Use a distinct color for visualization, e.g. yellow for 2s
-    if (true) {
+    if (electronPos.z > 0 || electronPos.y < 0) {
     particles.emplace_back(electron_r, vec4(0.0f, 1.0f, 1.0f, 1.0f), electronPos); // cyan-ish color
     }
 }
@@ -508,8 +525,8 @@ void sample2p_x() {
     vec3 electronPos = engine.sphericalToCartesian(r, theta, phi);
 
     // Keep one lobe for visualization
-    if (true) {
-        particles.emplace_back(electron_r, vec4(1.0f, 1.0f, 1.0f, 1.0f), electronPos); // red for 2p_x
+    if (electronPos.z > 0 || electronPos.y < 0) {
+        particles.emplace_back(electron_r, vec4(1.0f, 0.0f, 0.0f, 1.0f), electronPos); // red for 2p_x
     }
 }
 void sample2p_y() {
@@ -558,7 +575,26 @@ void sample2p_z() {
     particles.emplace_back(electron_r, vec4(0.0f, 1.0f, 1.0f, 1.0f), electronPos); // red for 2p_z
 }
 
-// ------------- MAIN -------------- //
+void sample3p_z() {
+    float r = sampleR3p(); // 3p radial distribution
+    float theta, phi;
+
+    // --- sample theta --- (same angular part as 2p_z)
+    while (true) {
+        theta = acos(1.0f - 2.0f * static_cast<float>(rand()) / RAND_MAX); // [0, pi]
+        float prob = pow(cos(theta), 2); // cos^2(theta) for p_z alignment
+        if (static_cast<float>(rand()) / RAND_MAX <= prob) break;
+    }
+
+    // --- sample phi --- (uniform)
+    phi = 2.0f * M_PI * static_cast<float>(rand()) / RAND_MAX; // [0, 2pi]
+
+    vec3 electronPos = engine.sphericalToCartesian(r, theta, phi);
+
+    // visualize (different color for 3p_z)
+    particles.emplace_back(electron_r, vec4(0.0f, 1.0f, 1.0f, 1.0f), electronPos); // cyan-ish for 3p_z
+}
+// ================= Main ================= //
 int main () {
     setupCameraCallbacks(engine.window);
     GLint modelLoc = glGetUniformLocation(engine.shaderProgram, "model");
@@ -566,12 +602,13 @@ int main () {
     glUseProgram(engine.shaderProgram);
 
     // ---- GENERATE PARTICLES ---- //
-    for (int i = 0; i < 1000; ++i) {
-        // sample1s();
-        // //sample2s();
-        sample2p_x();
-        sample2p_y();
-        sample2p_z();
+    for (int i = 0; i < 2000; ++i) {
+        //sample1s();
+        //sample2s();
+        //sample2p_x();
+        //sample2p_y();
+        //sample2p_z();
+        sample3p_z();
     }
 
     for(float x = -500; x < 500; x+=fieldRes){

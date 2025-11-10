@@ -384,7 +384,6 @@ vector<Particle> particles{
     Particle(8.7f, vec4(1.0f, 0.0f, 0.0f, 1.0f), vec3(0.0f, 0.0f, 0.0f)), // nucleus
 };
 
-
 struct Dumbbell {
     GLuint VAO, VBO;
     vec3 position;
@@ -402,7 +401,7 @@ struct Dumbbell {
 
         // sensible defaults so we actually see it
         position = vec3(0.0f);
-        color = vec4(1.0f, 0.5f, 1.0f, 0.1f); // magenta, opaque by default
+        color = vec4(1.0f, 0.5f, 1.0f, 1.0f); // magenta, opaque by default
     }
 
     void Draw(GLint objectColorLoc, GLint modelLoc) {
@@ -412,68 +411,50 @@ struct Dumbbell {
         glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
         glBindVertexArray(VAO);
         glLineWidth(2.0f); // optional: make lines thicker
-        glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(vertices.size() / 3)); // draw the stored line segments
+        glDrawArrays(GL_LINES, 0, (GLsizei)(vertices.size() / 3)); // draw the stored line segments
         glBindVertexArray(0);
     }
     vector<float> DrawDumbell(float maxRad2p1, float maxRad2p2, float maxRad2p3, float maxRad2p4, float maxRad2p5, char axis) {
         vector<float> vertices;
-        int segments = 40; // Number of points per circle
+        int segments = 40;  // number of points per circle
 
+        // y positions of each circle
         float centers[5] = { 100.0f, 200.0f, 300.0f, 400.0f, 500.0f };
         float radii[5] = { maxRad2p1, maxRad2p2, maxRad2p3, maxRad2p4, maxRad2p5 };
 
-
-        vertices.insert(vertices.end(), {0.0, 0.0f, 0.0});
-        // Loop through the strips (4 strips total)
-        for (int i = 0; i < 4; ++i) {
-            float r1 = radii[i];
-            float y1 = centers[i];
-            float r2 = radii[i+1];
-            float y2 = centers[i+1];
+        for (int i = 0; i < 5; ++i) {
+            float r = radii[i];
+            float y = centers[i];
 
             for (int j = 0; j < segments; ++j) {
                 float theta1 = (float)j / segments * 2.0f * M_PI;
                 float theta2 = (float)(j + 1) / segments * 2.0f * M_PI;
 
-                // Define the four corners of the quad (two on ring i, two on ring i+1)
-                vec3 vA, vB, vC, vD; // vA and vB on ring i, vC and vD on ring i+1
-
+                // default orientation: circles around the Y axis
+                vec3 p1, p2;
                 if (axis == 'y') {
-                    vA = vec3(r1 * cos(theta1), y1, r1 * sin(theta1));
-                    vB = vec3(r1 * cos(theta2), y1, r1 * sin(theta2));
-                    vC = vec3(r2 * cos(theta1), y2, r2 * sin(theta1));
-                    vD = vec3(r2 * cos(theta2), y2, r2 * sin(theta2));
+                    p1 = vec3(r * cos(theta1), y, r * sin(theta1));
+                    p2 = vec3(r * cos(theta2), y, r * sin(theta2));
                 } 
                 else if (axis == 'x') {
-                    // You need to adjust for X-axis orientation
-                    vA = vec3(y1, r1 * cos(theta1), r1 * sin(theta1));
-                    vB = vec3(y1, r1 * cos(theta2), r1 * sin(theta2));
-                    vC = vec3(y2, r2 * cos(theta1), r2 * sin(theta1));
-                    vD = vec3(y2, r2 * cos(theta2), r2 * sin(theta2));
+                    p1 = vec3(y, r * cos(theta1), r * sin(theta1));
+                    p2 = vec3(y, r * cos(theta2), r * sin(theta2));
                 } 
-                // ... (Handle 'z' axis similarly) ...
+                else if (axis == 'z') {
+                    p1 = vec3(r * cos(theta1), r * sin(theta1), y);
+                    p2 = vec3(r * cos(theta2), r * sin(theta2), y);
+                }
 
-                // --- Quad (vA, vB, vD, vC) -> Two Triangles ---
-
-                // Triangle 1: vA-vB-vC
-                vertices.insert(vertices.end(), {vA.x, vA.y, vA.z});
-                vertices.insert(vertices.end(), {vB.x, vB.y, vB.z});
-                vertices.insert(vertices.end(), {vC.x, vC.y, vC.z});
-
-                // Triangle 2: vB-vD-vC
-                vertices.insert(vertices.end(), {vB.x, vB.y, vB.z});
-                vertices.insert(vertices.end(), {vD.x, vD.y, vD.z});
-                vertices.insert(vertices.end(), {vC.x, vC.y, vC.z});
+                // draw as a line loop (two points per segment)
+                vertices.insert(vertices.end(), {p1.x, p1.y, p1.z});
+                vertices.insert(vertices.end(), {p2.x, p2.y, p2.z});
             }
         }
 
-        //vertices.insert(vertices.end(), {0.0, 0.0f, 0.0});
-        
         return vertices;
     }
 
 };
-
 
 // ================= Probability functions ================= //
 float radialProbability1s(float r) {
@@ -581,7 +562,7 @@ void sample2p_x() {
     vec3 electronPos = engine.sphericalToCartesian(r, theta, phi);
 
     // Keep one lobe for visualization
-    if (true) {
+    if (electronPos.z > 0 || electronPos.y < 0) {
         particles.emplace_back(electron_r, vec4(1.0f, 0.0f, 0.0f, 1.0f), electronPos, "2p_x"); // red for 2p_x
     }
 }
@@ -659,18 +640,11 @@ int main () {
 
     // ---- GENERATE PARTICLES ---- //
     for (int i = 0; i < 2000; ++i) {
-        //sample1s();
-        //sample2s();
-        //sample2p_x();
+        sample1s();
+        // sample1s();
+        sample2s();
+        // sample2s();
         //sample2p_y();
-        //sample2p_z();
-        //sample3p_z();
-        // sample1s();
-        // sample1s();
-        // sample2s();
-        // sample2s();
-        // sample2p_x();
-        // sample2p_x();
     }
 
     // -------- MAIN LOOP -------- //
@@ -684,8 +658,6 @@ int main () {
     float maxRad2p3 = 0.0f;
     float maxRad2p4 = 0.0f;
     float maxRad2p5 = 0.0f;
-
-    // ------------------ RENDERING LOOP ------------------
     while (!glfwWindowShouldClose(engine.window)) {
         // maxRad1s = 0.0f;
         // maxRad2s = 0.0f;
@@ -694,89 +666,86 @@ int main () {
         // ---- DRAW GRID ----
         grid.Draw(objectColorLoc);
 
-        // ---- SAMPLE NEW PARTICLES PERIODICALLY ----
-        sample1s();
-        sample1s();
-        sample2s();
-        sample2s();
-        sample2p_y();
-        sample2p_y();
+        // sample1s();
+        // sample1s();
+        // sample2s();
+        // sample2s();
 
-        // ------------------ DRAW PARTICLES ------------------
+        // ---- DRAW PARTICLES ----
         for (auto& p : particles) {
             p.Draw(objectColorLoc, modelLoc);
             glDrawArrays(GL_TRIANGLES, 0, p.vertices.size() / 3);
-            if (p.orbital == "1s") {
-                float r = length(p.position);
-                if (r > maxRad1s) {
-                    maxRad1s = r;
-                }
-            }
-            if (p.orbital == "2s") {
-                float r = length(p.position);
-                if (r > maxRad2s) {
-                    maxRad2s = r;
-                }
-            }
-            if (p.orbital == "2p_x") {
-                float x = p.position.x;
-                float r = sqrt(p.position.x * p.position.x + p.position.z * p.position.z);  // distance from y-axis
+            // if (p.orbital == "1s") {
+            //     float r = length(p.position);
+            //     if (r > maxRad1s) {
+            //         maxRad1s = r;
+            //     }
+            // }
+            // if (p.orbital == "2s") {
+            //     float r = length(p.position);
+            //     if (r > maxRad2s) {
+            //         maxRad2s = r;
+            //     }
+            // }
+            // if (p.orbital == "2p_y") {
+            //     float y = p.position.y;
+            //     float r = sqrt(p.position.x * p.position.x + p.position.z * p.position.z);  // distance from y-axis
 
-                if (x < 100.0f) {
-                    if (r > maxRad2p1) {
-                        maxRad2p1 = r;
-                        //cout << "maxRad2p1: " << maxRad2p1 << "\n";
-                    }
-                } else if (x < 200.0f) {
-                    if (r > maxRad2p2) {
-                        maxRad2p2 = r;
-                        //cout << "maxRad2p2: " << maxRad2p2 << "\n";
-                    }
-                } else if (x < 300.0f) {
-                    if (r > maxRad2p3) {
-                        maxRad2p3 = r;
-                        //cout << "maxRad2p3: " << maxRad2p3 << "\n";
-                    }
-                } else if (x < 400.0f) {
-                    if (r > maxRad2p4) {
-                        maxRad2p4 = r;
-                        //cout << "maxRad2p4: " << maxRad2p4 << "\n";
-                    }
-                } else if (x < 500.0f) {
-                    if (r > maxRad2p5) {
-                        maxRad2p5 = r;
-                        //cout << "maxRad2p5: " << maxRad2p5 << "\n";
-                    }
-                }
-            }
+            //     if (y < 100.0f) {
+            //         if (r > maxRad2p1) {
+            //             maxRad2p1 = r;
+            //             //cout << "maxRad2p1: " << maxRad2p1 << "\n";
+            //         }
+            //     } else if (y < 200.0f) {
+            //         if (r > maxRad2p2) {
+            //             maxRad2p2 = r;
+            //             //cout << "maxRad2p2: " << maxRad2p2 << "\n";
+            //         }
+            //     } else if (y < 300.0f) {
+            //         if (r > maxRad2p3) {
+            //             maxRad2p3 = r;
+            //             //cout << "maxRad2p3: " << maxRad2p3 << "\n";
+            //         }
+            //     } else if (y < 400.0f) {
+            //         if (r > maxRad2p4) {
+            //             maxRad2p4 = r;
+            //             //cout << "maxRad2p4: " << maxRad2p4 << "\n";
+            //         }
+            //     } else if (y < 500.0f) {
+            //         if (r > maxRad2p5) {
+            //             maxRad2p5 = r;
+            //             //cout << "maxRad2p5: " << maxRad2p5 << "\n";
+            //         }
+            //     }
+            // }
+        
         }
+        //cout<< "Particles: " << particles.size() << " | Max 1s radius: " << maxRad1s << " pm\r" << flush;
+
+        // glEnable(GL_BLEND);
+        // glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        // glDepthMask(GL_FALSE); // disable depth writes for transparency
+
         
+        // ---------- DRAW ORBITAL SHAPES -----------
 
-
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        glDepthMask(GL_FALSE); // disable depth writes for transparency
-
-        
-        // ------------------ DRAW ORBITALS ------------------
-        Particle orbital = Particle(maxRad1s, vec4(1.0f, 1.0f, 0.0f, 0.1f), vec3(0.0f, 0.0f, 0.0f));
+        Particle orbital = Particle(maxRad1s, vec4(1.0f, 1.0f, 0.0f, 0.05f), vec3(0.0f, 0.0f, 0.0f));
         orbital.Draw(objectColorLoc, modelLoc);
         glDrawArrays(GL_TRIANGLES, 0, orbital.vertices.size() / 3);
         glBindVertexArray(0);
 
-        Particle orbital2 = Particle(maxRad2s, vec4(0.0f, 1.0f, 1.0f, 0.1f), vec3(0.0f, 0.0f, 0.0f));
+        Particle orbital2 = Particle(maxRad2s, vec4(0.0f, 1.0f, 1.0f, 0.05f), vec3(0.0f, 0.0f, 0.0f));
         orbital2.Draw(objectColorLoc, modelLoc);
         glDrawArrays(GL_TRIANGLES, 1, orbital2.vertices.size() / 3);
         glBindVertexArray(1);
 
-        Dumbbell dumb = Dumbbell(maxRad2p1, maxRad2p2, maxRad2p3, maxRad2p4, maxRad2p5, 'x');
+        Dumbbell dumb = Dumbbell(maxRad2p1, maxRad2p2, maxRad2p3, maxRad2p4, maxRad2p5, 'z');
         dumb.Draw(objectColorLoc, modelLoc);
-        
+        glDrawArrays(GL_TRIANGLES, 1, dumb.vertices.size() / 3);
+        glBindVertexArray(1);
 
-        // particles.erase(particles.begin() + 1, particles.end());
+        //particles.erase(particles.begin() + 1, particles.end());
 
-        glDepthMask(GL_TRUE);
-        glDisable(GL_BLEND);
         glfwSwapBuffers(engine.window);
         glfwPollEvents();
     }
@@ -787,7 +756,6 @@ int main () {
         glDeleteBuffers(1, &p.VBO);
     }
 
-    
     glfwDestroyWindow(engine.window);
     glfwTerminate();
     return 0;

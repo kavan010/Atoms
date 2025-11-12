@@ -126,6 +126,17 @@ struct Engine {
             exit(EXIT_FAILURE);
         }
 
+        // macOS requires explicit hints for modern OpenGL
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+        glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+        #ifdef __APPLE__
+        glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+        #endif
+
+
+
+
         // create window
         window = glfwCreateWindow(WIDTH, HEIGHT, "Quantum Simulation by kavan G", nullptr, nullptr);
         if (!window) {
@@ -429,119 +440,37 @@ struct Dumbbell {
         glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(vertices.size() / 3)); // draw the stored line segments
         glBindVertexArray(0);
     }
-    
+
+    // Update DrawDumbell to use the internal vector and step
     vector<float> DrawDumbell() {
         vector<float> vertices;
-        int sectorCount = 36;
-        int stackCount = 18;
+        int sectorCount = 36; int stackCount = 18;
 
-        float rx = max2px / 2.0f; // radius x
-        float ry = max2py;        // radius y
-        float rz = max2pz;        // radius z
-        float centerX = rx;       // right sphere
-        float centerXMirror = -rx; // left sphere
+        float rx = max2px / 2.0f;  // radius x
+        float ry = max2py;         // radius y
+        float rz = max2pz;         // radius z
+        float centerX = rx;
 
-        // store points for one sphere
-        vector<vec3> points((stackCount + 1) * (sectorCount + 1));
-
-        // build first sphere
-        // vertices.push_back(rx);
-        // vertices.push_back(0.0);
-        // vertices.push_back(0.0);
-        // vertices.push_back(-rx);
-        // vertices.push_back(0.0);
-        // vertices.push_back(0.0);
         for (int i = 0; i <= stackCount; ++i) {
-            float stackAngle = M_PI / 2 - i * (M_PI / stackCount);
-            float xy = cosf(stackAngle);
-            float y = ry * sinf(stackAngle);
+            float stackAngle = M_PI / 2 - i * (M_PI / stackCount);  // from +pi/2 to -pi/2
+            float xy = cosf(stackAngle);                        // radius * cos(stack)
+            float y = ry * sinf(stackAngle);                    // scaled y
 
             for (int j = 0; j <= sectorCount; ++j) {
-                float sectorAngle = j * (2 * M_PI / sectorCount);
-                float x = rx * xy * cosf(sectorAngle) + centerX;
+                float sectorAngle = j * (2 * M_PI / sectorCount); // 0 → 2π
+
+                float x = rx * xy * cosf(sectorAngle);
                 float z = rz * xy * sinf(sectorAngle);
-                points[i * (sectorCount + 1) + j] = vec3(x, y, z);
+
+                // Shift center along x-axis
+                vertices.push_back(centerX + x);
+                vertices.push_back(y);
+                vertices.push_back(z);
             }
         }
-
-        // build triangles for right sphere
-        for (int i = 0; i < stackCount; ++i) {
-            for (int j = 0; j < sectorCount; ++j) {
-                int first = i * (sectorCount + 1) + j;
-                int second = first + sectorCount + 1;
-
-                // triangle 1
-                vertices.push_back(points[first].x);
-                vertices.push_back(points[first].y);
-                vertices.push_back(points[first].z);
-
-                vertices.push_back(points[second].x);
-                vertices.push_back(points[second].y);
-                vertices.push_back(points[second].z);
-
-                vertices.push_back(points[first + 1].x);
-                vertices.push_back(points[first + 1].y);
-                vertices.push_back(points[first + 1].z);
-
-                // triangle 2
-                vertices.push_back(points[first + 1].x);
-                vertices.push_back(points[first + 1].y);
-                vertices.push_back(points[first + 1].z);
-
-                vertices.push_back(points[second].x);
-                vertices.push_back(points[second].y);
-                vertices.push_back(points[second].z);
-
-                vertices.push_back(points[second + 1].x);
-                vertices.push_back(points[second + 1].y);
-                vertices.push_back(points[second + 1].z);
-            }
-        }
-
-        // now build mirrored sphere by flipping X
-        for (int i = 0; i < points.size(); ++i) {
-            vec3 p = points[i];
-            p.x = -p.x; // mirror along x-axis
-            points[i] = p;
-        }
-
-        // build triangles for mirrored sphere
-        for (int i = 0; i < stackCount; ++i) {
-            for (int j = 0; j < sectorCount; ++j) {
-                int first = i * (sectorCount + 1) + j;
-                int second = first + sectorCount + 1;
-
-                // triangle 1
-                vertices.push_back(points[first].x);
-                vertices.push_back(points[first].y);
-                vertices.push_back(points[first].z);
-
-                vertices.push_back(points[second].x);
-                vertices.push_back(points[second].y);
-                vertices.push_back(points[second].z);
-
-                vertices.push_back(points[first + 1].x);
-                vertices.push_back(points[first + 1].y);
-                vertices.push_back(points[first + 1].z);
-
-                // triangle 2
-                vertices.push_back(points[first + 1].x);
-                vertices.push_back(points[first + 1].y);
-                vertices.push_back(points[first + 1].z);
-
-                vertices.push_back(points[second].x);
-                vertices.push_back(points[second].y);
-                vertices.push_back(points[second].z);
-
-                vertices.push_back(points[second + 1].x);
-                vertices.push_back(points[second + 1].y);
-                vertices.push_back(points[second + 1].z);
-            }
-        }
-
+        
         return vertices;
     }
-
 };
 
 // ================= Probability functions ================= //
@@ -773,8 +702,6 @@ int main () {
         sample2s();
         sample2p_x();
         sample2p_x();
-        sample2p_y();
-        sample2p_y();
 
         // ------------------ DRAW PARTICLES ------------------
         for (auto& p : particles) {
@@ -803,7 +730,6 @@ int main () {
                     max2pz = p.position.z;
                 }
             }
-        
         }
         
 
@@ -826,7 +752,7 @@ int main () {
 
         Dumbbell dumb(max2px, max2py, max2pz, 'x');
         dumb.Draw(objectColorLoc, modelLoc);
-        //cout<< "max x rad: " << max2px << "   maxyrad:  "<< max2py << "maxzrad:" << max2pz<<endl;
+        cout<< "max x rad: " << max2px << "   maxyrad:  "<< max2py << "maxzrad:" << max2pz<<endl;
         
 
         // particles.erase(particles.begin() + 1, particles.end());

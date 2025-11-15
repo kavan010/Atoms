@@ -20,7 +20,8 @@ struct Camera {
     vec3 target = vec3(0.0f);
     vec3 up = vec3(0,1,0);
 
-    float radius = 20000.0f;
+    // make radius positive and on a sensible scale so zoom is meaningful
+    float radius = 200.0f;
 
     float azimuth = 0.0f;
     float elevation = M_PI / 2.0f;
@@ -58,12 +59,17 @@ struct Camera {
         lastX = x;
         lastY = y;
     }
-
     void processMouseButton(int button, int action, int mods, GLFWwindow* win) {
         if(button == GLFW_MOUSE_BUTTON_LEFT) {
             if(action == GLFW_PRESS) {
                 dragging = true;
-                glfwGetCursorPos(win, &lastX, &lastY);
+                // get cursor in GLFW coords (origin top-left) then convert to OpenGL coords (origin bottom-left)
+                double lx, ly;
+                glfwGetCursorPos(win, &lx, &ly);
+                int ww, wh;
+                glfwGetWindowSize(win, &ww, &wh);
+                lastX = lx;
+                lastY = (double)wh - ly;
             } else if(action == GLFW_RELEASE) {
                 dragging = false;
             }
@@ -71,25 +77,33 @@ struct Camera {
     }
 
     void processScroll(double xoffset, double yoffset) {
-        radius -= yoffset * zoomFactor;
-        if(radius < 1.0f) radius = 1.0f;
-        if(radius > 5000.0f) radius = 5000.0f;
-    }
+       // multiplicative zoom — smaller step for finer control
+       const float zoomStep = 0.10f; // 10% per notch
+       float factor;
+       if (yoffset > 0.0) factor = powf(1.0f - zoomStep, (float) yoffset);   // zoom in
+       else factor = powf(1.0f + zoomStep, (float) -yoffset);               // zoom out
+       radius *= factor;
+
+       if (radius < 1.0f) radius = 1.0f;
+       if (radius > 50000.0f) radius = 50000.0f;
+   }
     vec2 projectTo2D(const vec3& p, float left, float right, float bottom, float top) const {
         vec3 camPos = getPosition();
         mat4 view = lookAt(camPos, target, up);
         mat4 proj = ortho(left, right, bottom, top, -1.0f, 1.0f);
 
-
         vec4 clip = proj * view * vec4(p, 1.0f);
 
-        // Map normalized device coordinates (-1..1) to OpenGL coordinates
-        float x = clip.x / clip.w;
-        float y = clip.y / clip.w;
+        // NDC
+        float xN = clip.x / clip.w;
+        float yN = clip.y / clip.w;
 
-        // Scale to your engine units
-        x = left + (x + 1.0f) * 0.5f * (right - left);
-        y = bottom + (y + 1.0f) * 0.5f * (top - bottom);
+        // flip Y so result uses bottom-left origin like your drawing code
+        yN = -yN;
+
+        // Scale to your engine units (match engine.run projection below)
+        float x = left + (xN + 1.0f) * 0.5f * (right - left);
+        float y = bottom + (yN + 1.0f) * 0.5f * (top - bottom);
 
         return vec2(x, y);
     }
@@ -117,16 +131,24 @@ struct Engine {
         glViewport(0, 0, WIDTH, HEIGHT);
     };
     void run() {
-        glClear(GL_COLOR_BUFFER_BIT);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        // Use camera.radius to control orthographic extents (zoom)
+        // Choose a base scale so radius==200 gives the original extents
+
+        const float baseRadius = 200.0f;
+        float zoomScale = camera.radius / baseRadius;
+        if (zoomScale <= 0.001f) zoomScale = 0.001f;
+        double left   = -WIDTH * zoomScale;
+        double right  =  WIDTH * zoomScale;
+        double bottom = -HEIGHT * zoomScale;
+        double top    =  HEIGHT * zoomScale;
+
+        // Save current matrices
         glMatrixMode(GL_PROJECTION);
+        glPushMatrix();
         glLoadIdentity();
-        double left   = -WIDTH;
-        double right  = WIDTH;
-        double bottom = -HEIGHT;
-        double top    = HEIGHT;
         glOrtho(left, right, bottom, top, -1.0, 1.0);
-        glMatrixMode(GL_MODELVIEW);
-        glLoadIdentity();
     }
     
     void drawCircle(float x, float y, float r, int segments = 100) {
@@ -181,6 +203,11 @@ struct Atom {
         float R = x * (1.0f - x / 6.0f) * exp(-x / 3.0f);
         return R * R * r * r; // multiply by r^2 for probability density
     }
+    float radialProbability3s(float r) {
+        float x = r / a0;
+        float R = (1.0f - (2.0f/3.0f)*x + (2.0f/27.0f)*x*x) * exp(-x / 3.0f);
+        return R * R * r * r;
+    }
 
     float sampleR1s() {
         float r_max = 5.0f * a0;  // arbitrary max radius
@@ -200,6 +227,16 @@ struct Atom {
             float r = static_cast<float>(rand()) / RAND_MAX * r_max;
             float y = static_cast<float>(rand()) / RAND_MAX * P_max;
             if (y <= radialProbability2s(r)) return r;
+        }
+    }
+    float sampleR3s() {
+        float r_max = 20.0f * a0;  // 3s extends farther than 1s/2s
+        float P_max = radialProbability3s(3.0f * a0); // near the 3s radial peak
+
+        while (true) {
+            float r = static_cast<float>(rand()) / RAND_MAX * r_max;
+            float y = static_cast<float>(rand()) / RAND_MAX * P_max;
+            if (y <= radialProbability3s(r)) return r;
         }
     }
     float sampleR2p() {
@@ -245,6 +282,17 @@ struct Atom {
         if (true) {
         particles.emplace_back( electronPos); // cyan-ish color
         }
+    }
+    void sample3s(vector<vec3> &particles) {
+        float r = sampleR3s();
+
+        // Uniform spherical angle distribution
+        float theta = acos(1.0f - 2.0f * static_cast<float>(rand()) / RAND_MAX);
+        float phi   = 2.0f * M_PI * static_cast<float>(rand()) / RAND_MAX;
+
+        vec3 pos = engine.sphericalToCartesian(r, theta, phi);
+
+        particles.emplace_back(pos);
     }
     void sample2p_x(vector<vec3> &particles) {
         float r = sampleR2p();
@@ -350,9 +398,13 @@ void setupCameraCallbacks(GLFWwindow* window) {
         cam->processMouseButton(button, action, mods, win);
     });
 
+    // flip Y here so Camera sees bottom-left origin coordinates
     glfwSetCursorPosCallback(window, [](GLFWwindow* win, double x, double y) {
         Camera* cam = (Camera*)glfwGetWindowUserPointer(win);
-        cam->processMouseMove(x, y);
+        int ww, wh;
+        glfwGetWindowSize(win, &ww, &wh);
+        double yf = (double)wh - y;
+        cam->processMouseMove(x, yf);
     });
 
     glfwSetScrollCallback(window, [](GLFWwindow* win, double xoffset, double yoffset) {
@@ -400,51 +452,57 @@ vec3 densityToColour(float d, float maxD) {
     return vec3(r, g, b);
 }
 void calculateDensityMap(const vector<vec2>& particles) {
-    // 1. Reset the density map and max density
+    // Reset
     fill(density.begin(), density.end(), 0.0f);
     maxDensity = 0.0f;
 
-    // Define the influence radius (e.g., 25 units in your coordinate system)
+    // Match ortho extents used by engine.run
+    const float baseRadius = 200.0f;
+    float zoomScale = camera.radius / baseRadius;
+    if (zoomScale <= 0.001f) zoomScale = 0.001f;
+    float left   = -engine.WIDTH * zoomScale;
+    float right  =  engine.WIDTH * zoomScale;
+    float bottom = -engine.HEIGHT * zoomScale;
+    float top    =  engine.HEIGHT * zoomScale;
+
+    // Cell size in world coordinates
+    float cellW = (right - left) / float(GRID_W);
+    float cellH = (top - bottom) / float(GRID_H);
+
+    // Influence radius in world units (tweak if you want wider/narrower blur)
     const float INFLUENCE_RADIUS = 200.0f;
     const float INFLUENCE_RADIUS_SQ = INFLUENCE_RADIUS * INFLUENCE_RADIUS;
-    
-    // Scale factor to make the density values manageable/visible
-    const float DENSITY_SCALE = 1.0f; 
 
-    // 2. Iterate through all particles and contribute to the grid
     for (const vec2& p : particles) {
-        // Map particle position to grid coordinates (assuming center is 0,0)
-        // Convert from OpenGL coordinates (-WIDTH to WIDTH) to Grid indices (0 to GRID_W-1)
-        int center_i = (int)round(p.x + GRID_W) / 2; // (p.x + 800) / 2 -> 0 to 800
-        int center_j = (int)round(p.y + GRID_H) / 2; // (p.y + 600) / 2 -> 0 to 600
+        // particle outside current extents -> skip
+        if (p.x < left || p.x > right || p.y < bottom || p.y > top) continue;
 
-        // Determine the bounds of the grid cells to update (a box around the particle)
-        int min_i = std::max(0, center_i - (int)ceil(INFLUENCE_RADIUS));
-        int max_i = std::min(GRID_W - 1, center_i + (int)ceil(INFLUENCE_RADIUS));
-        int min_j = std::max(0, center_j - (int)ceil(INFLUENCE_RADIUS));
-        int max_j = std::min(GRID_H - 1, center_j + (int)ceil(INFLUENCE_RADIUS));
+        int center_i = int(floor((p.x - left) / cellW));
+        int center_j = int(floor((p.y - bottom) / cellH));
+        if (center_i < 0 || center_i >= GRID_W || center_j < 0 || center_j >= GRID_H) continue;
 
-        // Iterate over the nearby grid cells
+        int radiusCellsX = (int)ceil(INFLUENCE_RADIUS / cellW);
+        int radiusCellsY = (int)ceil(INFLUENCE_RADIUS / cellH);
+
+        int min_i = std::max(0, center_i - radiusCellsX);
+        int max_i = std::min(GRID_W - 1, center_i + radiusCellsX);
+        int min_j = std::max(0, center_j - radiusCellsY);
+        int max_j = std::min(GRID_H - 1, center_j + radiusCellsY);
+
         for (int j = min_j; j <= max_j; ++j) {
             for (int i = min_i; i <= max_i; ++i) {
-                // Get the center position of the grid cell
-                // Convert grid index back to OpenGL coordinates
-                float cell_x = i * 2.0f - GRID_W;
-                float cell_y = j * 2.0f - GRID_H;
+                // cell center in world coords
+                float cell_x = left + (i + 0.5f) * cellW;
+                float cell_y = bottom + (j + 0.5f) * cellH;
 
-                // Calculate the squared distance from particle center (p) to cell center (cell_x, cell_y)
                 float dx = p.x - cell_x;
                 float dy = p.y - cell_y;
-                float distSq = dx * dx + dy * dy;
+                float distSq = dx*dx + dy*dy;
 
                 if (distSq < INFLUENCE_RADIUS_SQ) {
-                    // Use a simple quadratic kernel (smooth falloff)
-                    // You could use a Gaussian kernel for smoother results, but this is simpler
-                    float dist = sqrt(distSq);
+                    float dist = sqrtf(distSq);
                     float influence = (INFLUENCE_RADIUS - dist) / INFLUENCE_RADIUS;
-                    // Contribution = (1 - (dist / radius))^2 
-                    float kernel_weight = influence * influence * DENSITY_SCALE; 
-                    
+                    float kernel_weight = influence * influence;
                     int index = j * GRID_W + i;
                     density[index] += kernel_weight;
                     maxDensity = std::max(maxDensity, density[index]);
@@ -454,29 +512,31 @@ void calculateDensityMap(const vector<vec2>& particles) {
     }
 }
 void drawDensityMap() {
-    // 1. Set up for drawing quads
-    glBegin(GL_QUADS);
+    // Match ortho extents used by engine.run
+    const float baseRadius = 200.0f;
+    float zoomScale = camera.radius / baseRadius;
+    if (zoomScale <= 0.001f) zoomScale = 0.001f;
+    float left   = -engine.WIDTH * zoomScale;
+    float right  =  engine.WIDTH * zoomScale;
+    float bottom = -engine.HEIGHT * zoomScale;
+    float top    =  engine.HEIGHT * zoomScale;
 
-    // 2. Iterate over the entire grid
+    float cellW = (right - left) / float(GRID_W);
+    float cellH = (top - bottom) / float(GRID_H);
+
+    glBegin(GL_QUADS);
     for (int j = 0; j < GRID_H; ++j) {
         for (int i = 0; i < GRID_W; ++i) {
             int index = j * GRID_W + i;
             float d = density[index];
             vec3 color = densityToColour(d, maxDensity);
-            
-            // Set the color for the current cell (from blue for low to red for high)
             glColor3f(color.r, color.g, color.b);
 
-            // Calculate cell boundaries in OpenGL coordinates 
-            // The coordinate system ranges from -WIDTH to WIDTH, and -HEIGHT to HEIGHT.
-            // A cell at (i, j) has a center at ((i * 2) - WIDTH, (j * 2) - HEIGHT)
-            
-            float x0 = i * 2.0f - GRID_W;
-            float y0 = j * 2.0f - GRID_H;
-            float x1 = (i + 1) * 2.0f - GRID_W;
-            float y1 = (j + 1) * 2.0f - GRID_H;
+            float x0 = left + i * cellW;
+            float y0 = bottom + j * cellH;
+            float x1 = x0 + cellW;
+            float y1 = y0 + cellH;
 
-            // Draw the quad for the cell
             glVertex2f(x0, y0);
             glVertex2f(x1, y0);
             glVertex2f(x1, y1);
@@ -488,9 +548,19 @@ void drawDensityMap() {
 
 void project_2d(const vector<vec3>& particles_3d, vector<vec2>& particles_2d) {
     particles_2d.clear();
+
+    // match the ortho extents used in Engine::run so projection/viewport align
+    const float baseRadius = 200.0f;
+    float zoomScale = camera.radius / baseRadius;
+    if (zoomScale <= 0.001f) zoomScale = 0.001f;
+
+    float left   = -engine.WIDTH * zoomScale;
+    float right  =  engine.WIDTH * zoomScale;
+    float bottom = -engine.HEIGHT * zoomScale;
+    float top    =  engine.HEIGHT * zoomScale;
+
     for (const vec3& p : particles_3d) {
-        // Use camera's projectTo2D instead of just XY
-        particles_2d.push_back(camera.projectTo2D(p, -engine.WIDTH, engine.WIDTH, -engine.HEIGHT, engine.HEIGHT));
+        particles_2d.push_back(camera.projectTo2D(p, left, right, bottom, top));
     }
 }
 
@@ -559,21 +629,21 @@ void generateParticles(vector<vec3>& particles, int numParticles, int numCluster
 // ================= Main ================= //
 int main () {
     setupCameraCallbacks(engine.window);
-    
-    
+
+
 
     // ----- Generate particles -----
     vector<vec3> particles_3d;
     //generateParticles(particles_3d, 10000, 5, 300.0f);
     for (int i = 0; i < 2000; i++) {
         //atom.sample1s(particles_3d);
-        atom.sample2p_y(particles_3d);
-        //atom.sample3p_z(particles_3d);
+        //atom.sample2p_y(particles_3d);
+        atom.sample3p_z(particles_3d);
+        //atom.sample3s(particles_3d);
     }
 
     // ------- 1. Declare 2D projection -------------------
     vector<vec2> particles;
-    
 
     while (!glfwWindowShouldClose(engine.window)) {
         engine.run();
@@ -587,12 +657,11 @@ int main () {
         drawDensityMap();
 
         // ------- 2. Draw the particles -------------------
-        glColor4f(1.0f, 1.0f, 1.0f, 0.3f);
+ 
+        // Draw 2D projected particles in this orthographic space
+        glColor4f(1.0f, 1.0f, 1.0f, 0.7f);
         for (const vec2& p : particles)
             engine.drawFilledCircle(p.x, p.y, 1.0f);
-
-
-
 
         glfwSwapBuffers(engine.window);
         glfwPollEvents();

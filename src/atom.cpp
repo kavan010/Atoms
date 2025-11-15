@@ -8,244 +8,340 @@
 #include <cmath>
 #include <cstdlib>
 #include <ctime>
-#include <iomanip>
-#include <thread>
-#include <chrono>
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 using namespace glm;
 using namespace std;
 
-const float c = 299792458.0f / 100000000.0f;    // speed of light in m/s
-const float eu = 2.71828182845904523536f; // Euler's number
-const float k = 8.9875517923e9f; // Coulomb's constant
 const float a0 = 52.9f; // Bohr radius in pm
-const float electron_r = 2.0f;
-const float fieldRes = 25.0f;
-
-// ================= Engine ================= //
-struct Particle;
 
 struct Camera {
-    // Center the camera orbit at (0, 0, 0) + init radius
-    vec3 target = vec3(0.0f, 0.0f, 0.0f);
-    float radius = 500.0f;
+    vec3 target = vec3(0.0f);
+    vec3 up = vec3(0,1,0);
 
-    // Camera angles
+    float radius = 20000.0f;
+
     float azimuth = 0.0f;
     float elevation = M_PI / 2.0f;
 
-    // movement speeds
     float orbitSpeed = 0.01f;
-    float panSpeed = 0.01f;
-    double zoomSpeed = 125.0f;
+    double zoomFactor = 2.0;
 
     bool dragging = false;
-    bool panning = false;
-    bool moving = false; // For compute shader optimization
     double lastX = 0.0, lastY = 0.0;
 
-    // Calculate camera position in world space
-    vec3 position() const {
-        float clampedElevation = clamp(elevation, 0.01f, float(M_PI) - 0.01f);
-        // Orbit around (0,0,0) always
-        return vec3(
-            radius * sin(clampedElevation) * cos(azimuth),
-            radius * cos(clampedElevation),
-            radius * sin(clampedElevation) * sin(azimuth)
-        );
+    vec3 getPosition() const {
+        float x = radius * sin(elevation) * cos(azimuth);
+        float y = radius * cos(elevation);
+        float z = radius * sin(elevation) * sin(azimuth);
+        return target + vec3(x, y, z);
     }
-    void update() {
-        // Always keep target at black hole center
-        target = vec3(0.0f, 0.0f, 0.0f);
-        if(dragging | panning) {
-            moving = true;
-        } else {
-            moving = false;
-        }
+
+    void rotate(float dAzimuth, float dElevation) {
+        azimuth += dAzimuth;
+        elevation += dElevation;
+
+        if(elevation < 0.01f) elevation = 0.01f;
+        if(elevation > M_PI - 0.01f) elevation = M_PI - 0.01f;
+
+        if(azimuth > 2*M_PI) azimuth -= 2*M_PI;
+        if(azimuth < 0) azimuth += 2*M_PI;
     }
 
     void processMouseMove(double x, double y) {
-        float dx = float(x - lastX);
-        float dy = float(y - lastY);
-
-        if (dragging && panning) {
-            // Pan: Shift + Left or Middle Mouse
-            // Disable panning to keep camera centered on black hole
+        if(dragging) {
+            double dx = x - lastX;
+            double dy = y - lastY;
+            rotate(-dx * orbitSpeed, -dy * orbitSpeed); // fixed axes
         }
-        else if (dragging && !panning) {
-            // Orbit: Left mouse only
-            azimuth   += dx * orbitSpeed;
-            elevation -= dy * orbitSpeed;
-            elevation = clamp(elevation, 0.01f, float(M_PI) - 0.01f);
-        }
-
         lastX = x;
         lastY = y;
-        update();
     }
+
     void processMouseButton(int button, int action, int mods, GLFWwindow* win) {
-        if (button == GLFW_MOUSE_BUTTON_LEFT || button == GLFW_MOUSE_BUTTON_MIDDLE) {
-            if (action == GLFW_PRESS) {
+        if(button == GLFW_MOUSE_BUTTON_LEFT) {
+            if(action == GLFW_PRESS) {
                 dragging = true;
-                // Disable panning so camera always orbits center
-                panning = false;
                 glfwGetCursorPos(win, &lastX, &lastY);
-            } else if (action == GLFW_RELEASE) {
+            } else if(action == GLFW_RELEASE) {
                 dragging = false;
-                panning = false;
             }
         }
     }
-    void processScroll(double xoffset, double yoffset) {
-        radius -= yoffset * zoomSpeed;
-        update();
-    };
 
+    void processScroll(double xoffset, double yoffset) {
+        radius -= yoffset * zoomFactor;
+        if(radius < 1.0f) radius = 1.0f;
+        if(radius > 5000.0f) radius = 5000.0f;
+    }
+    vec2 projectTo2D(const vec3& p, float left, float right, float bottom, float top) const {
+        vec3 camPos = getPosition();
+        mat4 view = lookAt(camPos, target, up);
+        mat4 proj = ortho(left, right, bottom, top, -1.0f, 1.0f);
+
+
+        vec4 clip = proj * view * vec4(p, 1.0f);
+
+        // Map normalized device coordinates (-1..1) to OpenGL coordinates
+        float x = clip.x / clip.w;
+        float y = clip.y / clip.w;
+
+        // Scale to your engine units
+        x = left + (x + 1.0f) * 0.5f * (right - left);
+        y = bottom + (y + 1.0f) * 0.5f * (top - bottom);
+
+        return vec2(x, y);
+    }
 };
 Camera camera;
 
+// ================= Engine ================= //
 struct Engine {
-
-    // opengl vars
-     GLFWwindow* window;
-     GLuint shaderProgram;
-
-    // vars - scale
-    int WIDTH = 800;  // Window width
-    int HEIGHT = 600; // Window height
-    float width = 1000.0f; // Width of the viewport in picometers 
-    float height = 750.0f; // Height of the viewport in picometers 
-    
+    GLFWwindow* window;
+    int WIDTH = 800;
+    int HEIGHT = 600;
 
     Engine () {
-        // init glfw
-        if (!glfwInit()) {
-            cerr << "GLFW init failed\n";
+        if(!glfwInit()) {
+            cerr << "failed to init glfw, PANIC!";
             exit(EXIT_FAILURE);
-        }
-
-        // create window
-        window = glfwCreateWindow(WIDTH, HEIGHT, "Quantum Simulation by kavan G", nullptr, nullptr);
-        if (!window) {
-            cerr << "Failed to create GLFW window\n";
+        };
+        window = glfwCreateWindow(WIDTH, HEIGHT, "Atom Sim", nullptr, nullptr);
+        if(!window) {
+            cerr << "failed to create window, PANIC!";
             glfwTerminate();
             exit(EXIT_FAILURE);
         }
-        glViewport(0, 0, WIDTH, HEIGHT);
-        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glfwMakeContextCurrent(window);
-        glEnable(GL_DEPTH_TEST);
-
-        // Enable alpha blending for transparent objects
-        glEnable(GL_BLEND);
-        //glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-
-        // init glew
-        glewExperimental = GL_TRUE;
-        GLenum glewErr = glewInit();
-        if (glewErr != GLEW_OK) {
-            cerr << "Failed to initialize GLEW: "
-                << (const char*)glewGetErrorString(glewErr)
-                << "\n";
-            glfwTerminate();
-            exit(EXIT_FAILURE);
-        }
-        // Create shader program
-        this->shaderProgram = CreateShaderProgram();
-    }
-
+        glViewport(0, 0, WIDTH, HEIGHT);
+    };
     void run() {
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        glUseProgram(shaderProgram);
-
-        mat4 view = lookAt(camera.position(), camera.target, vec3(0,1,0));
-        mat4 projection = perspective(radians(45.0f), float(WIDTH)/HEIGHT, 0.1f, 10000.0f); // clipping distance
-
-        glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "view"), 1, GL_FALSE, value_ptr(view));
-        glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "projection"), 1, GL_FALSE, value_ptr(projection));
-
-    };
-    GLuint CreateShaderProgram(){
-        const char* vertexShaderSource = R"(
-        #version 330 core
-        layout (location = 0) in vec3 aPos;
-
-        uniform mat4 model;
-        uniform mat4 view;
-        uniform mat4 projection;
-        uniform vec4 objectColor;
-
-        out vec4 FragColorVS;
-
-        void main() {
-            gl_Position = projection * view * model * vec4(aPos, 1.0);
-            FragColorVS = objectColor;
-        })";
-
-        const char* fragmentShaderSource = R"(
-            #version 330 core
-            in vec4 FragColorVS;
-            out vec4 FragColor;
-
-            void main() {
-                FragColor = FragColorVS;
-            }
-        )";
-
-        // vertex shader
-        GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
-        glShaderSource(vertexShader, 1, &vertexShaderSource, nullptr);
-        glCompileShader(vertexShader);
-
-        // fragment shader
-        GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-        glShaderSource(fragmentShader, 1, &fragmentShaderSource, nullptr);
-        glCompileShader(fragmentShader);
-
-        GLuint shaderProgram = glCreateProgram();
-        glAttachShader(shaderProgram, vertexShader);
-        glAttachShader(shaderProgram, fragmentShader);
-        glLinkProgram(shaderProgram);
-
-        glDeleteShader(vertexShader);
-        glDeleteShader(fragmentShader);
-
-        return shaderProgram;
-    };
-    void CreateVBOVAO(GLuint& VAO, GLuint& VBO, const float* vertices, size_t vertexCount) {
-        glGenVertexArrays(1, &VAO);
-        glGenBuffers(1, &VBO);
-
-        glBindVertexArray(VAO);
-        glBindBuffer(GL_ARRAY_BUFFER, VBO);
-        glBufferData(GL_ARRAY_BUFFER, vertexCount * sizeof(float), vertices, GL_STATIC_DRAW);
-
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-        glEnableVertexAttribArray(0);
-        glBindVertexArray(0);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glMatrixMode(GL_PROJECTION);
+        glLoadIdentity();
+        double left   = -WIDTH;
+        double right  = WIDTH;
+        double bottom = -HEIGHT;
+        double top    = HEIGHT;
+        glOrtho(left, right, bottom, top, -1.0, 1.0);
+        glMatrixMode(GL_MODELVIEW);
+        glLoadIdentity();
     }
+    
+    void drawCircle(float x, float y, float r, int segments = 100) {
+        glBegin(GL_LINE_LOOP);
+        for (int i = 0; i < segments; i++) {
+            float angle = 2.0f * M_PI * i / segments;
+            float dx = r * cosf(angle);
+            float dy = r * sinf(angle);
+            glVertex2f(x + dx, y + dy);
+        }
+        glEnd();
+    }
+    void drawFilledCircle(float x, float y, float r, int segments = 50) {
+        glBegin(GL_TRIANGLE_FAN);
+        glVertex2f(x, y); // center
+        for (int i = 0; i <= segments; i++) {
+            float angle = 2.0f * M_PI * i / segments;
+            float dx = r * cosf(angle);
+            float dy = r * sinf(angle);
+            glVertex2f(x + dx, y + dy);
+        }
+        glEnd();
+    }
+
     vec3 sphericalToCartesian(float r, float theta, float phi){
         float x = r * sin(theta) * cos(phi);
         float y = r * cos(theta);
         float z = r * sin(theta) * sin(phi);
         return vec3(x, y, z);
     };
-    void SwitchTo2DRendering () {
-        // --- SWITCH TO 2D ORTHO FOR DENSITY ---
-        glm::mat4 ortho = glm::ortho(0.0f, float(WIDTH), 0.0f, float(HEIGHT));
-        GLuint projLoc = glGetUniformLocation(shaderProgram, "projection");
-        glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(ortho));
-
-        glm::mat4 view2D = glm::mat4(1.0f);
-        GLuint viewLoc = glGetUniformLocation(shaderProgram, "view");
-        glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view2D));
-    }
 };
 Engine engine;
 
+
+struct Atom {
+    // ================= Probability functions ================= //
+    float radialProbability1s(float r) {
+        float r_bohr = r / a0;
+        return 4.0 * r_bohr*r_bohr * exp(-2.0 * r_bohr);
+        //4 * r**2 * np.exp(-2 * r)
+    }
+    float radialProbability2s(float r) {
+        float r_bohr = r / a0;  // convert to Bohr radii
+        return 0.5f * pow(r_bohr, 2) * pow(1 - r_bohr / 2.0f, 2) * exp(-r_bohr);
+    }
+    float radialProbability2p(float r) {
+        float r_bohr = r / a0;  // convert to Bohr radii
+        return (pow(r_bohr, 4) / 24.0f) * exp(-r_bohr);
+    }
+    float radialProbability3p(float r) {
+        float x = r / a0;
+        float R = x * (1.0f - x / 6.0f) * exp(-x / 3.0f);
+        return R * R * r * r; // multiply by r^2 for probability density
+    }
+
+    float sampleR1s() {
+        float r_max = 5.0f * a0;  // arbitrary max radius
+        float P_max = radialProbability1s(0.0f); // max occurs at r ~ a0 (approx)
+        
+        while (true) {
+            float r = static_cast<float>(rand()) / RAND_MAX * r_max;
+            float y = static_cast<float>(rand()) / RAND_MAX * P_max;
+            if (y <= radialProbability1s(r)) return r;
+        }
+    }
+    float sampleR2s() {
+        float r_max = 10.0f * a0;  // 2s extends farther out than 1s
+        float P_max = radialProbability2s(a0); // rough peak near r ≈ a0
+
+        while (true) {
+            float r = static_cast<float>(rand()) / RAND_MAX * r_max;
+            float y = static_cast<float>(rand()) / RAND_MAX * P_max;
+            if (y <= radialProbability2s(r)) return r;
+        }
+    }
+    float sampleR2p() {
+        float r_max = 15.0f * a0;
+        float P_max = radialProbability2p(4.0f * a0);
+
+        while (true) {
+            float r = static_cast<float>(rand()) / RAND_MAX * r_max;
+            float y = static_cast<float>(rand()) / RAND_MAX * P_max;
+            if (y <= radialProbability2p(r)) return r;
+        }
+    }
+    float sampleR3p() {
+        float r_max = 25.0f * a0; // 3p orbitals extend farther than 2p
+        float P_max = radialProbability3p(8.0f * a0); // estimate peak around ~8a0
+
+        while (true) {
+            float r = static_cast<float>(rand()) / RAND_MAX * r_max;
+            float y = static_cast<float>(rand()) / RAND_MAX * P_max;
+            if (y <= radialProbability3p(r)) return r;
+        }
+    }
+
+    void sample1s(vector<vec3> &particles) {   // change return type to void
+        float r = sampleR1s();
+        float theta = acos(1.0f - 2.0f * static_cast<float>(rand()) / RAND_MAX); // [0, pi]
+        float phi   = 2.0f * M_PI * static_cast<float>(rand()) / RAND_MAX;       // [0, 2pi]
+        vec3 electronPos = engine.sphericalToCartesian(r, theta, phi);
+        
+        // Construct Particle in-place
+        if (true) {
+            particles.emplace_back(  electronPos ); // cyan-ish color
+        }
+    }
+    void sample2s(vector<vec3> &particles) {
+        float r = sampleR2s();
+        float theta = acos(1.0f - 2.0f * static_cast<float>(rand()) / RAND_MAX); // [0, π]
+        float phi   = 2.0f * M_PI * static_cast<float>(rand()) / RAND_MAX;       // [0, 2π]
+        
+        vec3 electronPos = engine.sphericalToCartesian(r, theta, phi);
+
+        // Use a distinct color for visualization, e.g. yellow for 2s
+        if (true) {
+        particles.emplace_back( electronPos); // cyan-ish color
+        }
+    }
+    void sample2p_x(vector<vec3> &particles) {
+        float r = sampleR2p();
+
+        float theta, phi;
+
+        // --- sample theta ---
+        while (true) {
+            theta = acos(1.0f - 2.0f * static_cast<float>(rand()) / RAND_MAX); // [0, pi]
+            float prob = pow(sin(theta), 3); // sin^3(theta)
+            if (static_cast<float>(rand()) / RAND_MAX <= prob) break;
+        }
+
+        // --- sample phi ---
+        while (true) {
+            phi = 2.0f * M_PI * static_cast<float>(rand()) / RAND_MAX; // [0, 2pi]
+            float prob = pow(cos(phi), 2); // cos^2(phi)
+            if (static_cast<float>(rand()) / RAND_MAX <= prob) break;
+        }
+
+        vec3 electronPos = engine.sphericalToCartesian(r, theta, phi);
+
+        // Keep one lobe for visualization
+        if (true) {
+            particles.emplace_back(  electronPos ); // red for 2p_x
+        }
+    }
+    void sample2p_y(vector<vec3> &particles) {
+        float r = sampleR2p();
+
+        float theta, phi;
+
+        // --- sample theta ---
+        while (true) {
+            theta = acos(1.0f - 2.0f * static_cast<float>(rand()) / RAND_MAX); // [0, pi]
+            float prob = pow(sin(theta), 3); // sin^3(theta)
+            if (static_cast<float>(rand()) / RAND_MAX <= prob) break;
+        }
+
+        // --- sample phi --- (changed to sin^2 to orient along Y axis)
+        while (true) {
+            phi = 2.0f * M_PI * static_cast<float>(rand()) / RAND_MAX; // [0, 2pi]
+            float prob = pow(sin(phi), 2); // sin^2(phi) -> aligns lobes along Y
+            if (static_cast<float>(rand()) / RAND_MAX <= prob) break;
+        }
+
+        vec3 electronPos = engine.sphericalToCartesian(r, theta, phi);
+
+        // Keep one lobe for visualization
+        if (true) {
+            particles.emplace_back( electronPos ); // red for 2p_y (keeps existing color)
+        }
+    }
+    void sample2p_z(vector<vec3> &particles) {
+        float r = sampleR2p();
+        float theta, phi;
+
+        // --- sample theta --- (weight with cos^2 to align lobes along Z)
+        while (true) {
+            theta = acos(1.0f - 2.0f * static_cast<float>(rand()) / RAND_MAX); // [0, pi]
+            float prob = pow(cos(theta), 2); // cos^2(theta)
+            if (static_cast<float>(rand()) / RAND_MAX <= prob) break;
+        }
+
+        // --- sample phi --- (uniform)
+        phi = 2.0f * M_PI * static_cast<float>(rand()) / RAND_MAX; // [0, 2pi]
+
+        vec3 electronPos = engine.sphericalToCartesian(r, theta, phi);
+
+        // Keep one lobe for visualization
+        particles.emplace_back(electronPos); // red for 2p_z
+    }
+
+    void sample3p_z(vector<vec3> &particles) {
+        float r = sampleR3p(); // 3p radial distribution
+        float theta, phi;
+
+        // --- sample theta --- (same angular part as 2p_z)
+        while (true) {
+            theta = acos(1.0f - 2.0f * static_cast<float>(rand()) / RAND_MAX); // [0, pi]
+            float prob = pow(cos(theta), 2); // cos^2(theta) for p_z alignment
+            if (static_cast<float>(rand()) / RAND_MAX <= prob) break;
+        }
+
+        // --- sample phi --- (uniform)
+        phi = 2.0f * M_PI * static_cast<float>(rand()) / RAND_MAX; // [0, 2pi]
+
+        vec3 electronPos = engine.sphericalToCartesian(r, theta, phi);
+
+        // visualize (different color for 3p_z)
+        particles.emplace_back( electronPos ); // cyan-ish for 3p_z
+    }
+
+};
+Atom atom;
+
+// ================= Callbacks ================= //
 void setupCameraCallbacks(GLFWwindow* window) {
     glfwSetWindowUserPointer(window, &camera);
 
@@ -266,585 +362,243 @@ void setupCameraCallbacks(GLFWwindow* window) {
 }
 
 
-// ================= Objects ================= //
-struct Grid {
-    GLuint gridVAO, gridVBO;
-    vector<float> vertices;
-    Grid() {
-        vertices = CreateGridVertices(500.0f, 2);
-        engine.CreateVBOVAO(gridVAO, gridVBO, vertices.data(), vertices.size());
+// ================= Grid Vars ================= //
+const int   GRID_W = engine.WIDTH;
+const int   GRID_H = engine.HEIGHT;
+const float CELL_W = 1.0f;
+const float CELL_H = 1.0f;
+
+vector<float> density(GRID_W * GRID_H, 0.0f);
+float maxDensity = 1.0f;
+
+// ================= Density map functions ================= //
+vec3 densityToColour(float d, float maxD) {
+    if (maxD <= 0.0f) maxD = 1.0f;
+    float t = glm::clamp(d / maxD, 0.0f, 1.0f);
+    float r, g, b;
+
+    if (t < 0.33f) {
+        // black → red
+        float k = t / 0.33f;
+        r = k;
+        g = 0.0f;
+        b = 0.0f;
+    } else if (t < 0.66f) {
+        // red → yellow
+        float k = (t - 0.33f) / 0.33f;
+        r = 1.0f;
+        g = k;
+        b = 0.0f;
+    } else {
+        // yellow → white
+        float k = (t - 0.66f) / 0.34f;
+        r = 1.0f;
+        g = 1.0f;
+        b = k;
     }
-    void Draw (GLint objectColorLoc) {
-        glUseProgram(engine.shaderProgram);
-        glUniform4f(objectColorLoc, 1.0f, 1.0f, 1.0f, 0.05f);
-        glBindBuffer(GL_ARRAY_BUFFER, gridVBO);
-        glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_DYNAMIC_DRAW);
-        DrawGrid(engine.shaderProgram, gridVAO, vertices.size());
-    }
-    void DrawGrid(GLuint shaderProgram, GLuint gridVAO, size_t vertexCount) {
-        glUseProgram(shaderProgram);
-        glm::mat4 model = glm::mat4(1.0f); // Identity matrix for the grid
-        GLint modelLoc = glGetUniformLocation(shaderProgram, "model");
-        glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
 
-        glBindVertexArray(gridVAO);
-        glPointSize(2.0f);
-        glDrawArrays(GL_LINES, 0, vertexCount / 3);
-        glBindVertexArray(0);
-    }
-    vector<float> CreateGridVertices(float size, int divisions) {
-        
-        std::vector<float> vertices;
-        float step = size / divisions;
-        float halfSize = size / 2.0f;
+    return vec3(r, g, b);
+}
+void calculateDensityMap(const vector<vec2>& particles) {
+    // 1. Reset the density map and max density
+    fill(density.begin(), density.end(), 0.0f);
+    maxDensity = 0.0f;
 
-        // amount to extend the central X-axis line (in same units as size)
-        float extra = step * 3.0f; // adjust this factor to make the line stick out more/less
-        int midZ = divisions / 2;
+    // Define the influence radius (e.g., 25 units in your coordinate system)
+    const float INFLUENCE_RADIUS = 200.0f;
+    const float INFLUENCE_RADIUS_SQ = INFLUENCE_RADIUS * INFLUENCE_RADIUS;
+    
+    // Scale factor to make the density values manageable/visible
+    const float DENSITY_SCALE = 1.0f; 
 
-        // x axis
-        for (int yStep = 3; yStep <= 3; ++yStep) {
-            float y = 0;
-            for (int zStep = 0; zStep <= divisions; ++zStep) {
-                float z = -halfSize + zStep * step;
-                for (int xStep = 0; xStep < divisions; ++xStep) {
-                    float xStart = -halfSize + xStep * step;
-                    float xEnd = xStart + step;
+    // 2. Iterate through all particles and contribute to the grid
+    for (const vec2& p : particles) {
+        // Map particle position to grid coordinates (assuming center is 0,0)
+        // Convert from OpenGL coordinates (-WIDTH to WIDTH) to Grid indices (0 to GRID_W-1)
+        int center_i = (int)round(p.x + GRID_W) / 2; // (p.x + 800) / 2 -> 0 to 800
+        int center_j = (int)round(p.y + GRID_H) / 2; // (p.y + 600) / 2 -> 0 to 600
 
-                    // If this is the central line (middle z), extend the very first and last segment
-                    if (zStep == midZ) {
-                        if (xStep == 0) {
-                            xStart -= extra; // extend left end
-                        }
-                        if (xStep == divisions - 1) {
-                            xEnd += extra;   // extend right end
-                        }
-                    }
+        // Determine the bounds of the grid cells to update (a box around the particle)
+        int min_i = std::max(0, center_i - (int)ceil(INFLUENCE_RADIUS));
+        int max_i = std::min(GRID_W - 1, center_i + (int)ceil(INFLUENCE_RADIUS));
+        int min_j = std::max(0, center_j - (int)ceil(INFLUENCE_RADIUS));
+        int max_j = std::min(GRID_H - 1, center_j + (int)ceil(INFLUENCE_RADIUS));
 
-                    vertices.push_back(xStart); vertices.push_back(y); vertices.push_back(z);
-                    vertices.push_back(xEnd);   vertices.push_back(y); vertices.push_back(z);
+        // Iterate over the nearby grid cells
+        for (int j = min_j; j <= max_j; ++j) {
+            for (int i = min_i; i <= max_i; ++i) {
+                // Get the center position of the grid cell
+                // Convert grid index back to OpenGL coordinates
+                float cell_x = i * 2.0f - GRID_W;
+                float cell_y = j * 2.0f - GRID_H;
+
+                // Calculate the squared distance from particle center (p) to cell center (cell_x, cell_y)
+                float dx = p.x - cell_x;
+                float dy = p.y - cell_y;
+                float distSq = dx * dx + dy * dy;
+
+                if (distSq < INFLUENCE_RADIUS_SQ) {
+                    // Use a simple quadratic kernel (smooth falloff)
+                    // You could use a Gaussian kernel for smoother results, but this is simpler
+                    float dist = sqrt(distSq);
+                    float influence = (INFLUENCE_RADIUS - dist) / INFLUENCE_RADIUS;
+                    // Contribution = (1 - (dist / radius))^2 
+                    float kernel_weight = influence * influence * DENSITY_SCALE; 
+                    
+                    int index = j * GRID_W + i;
+                    density[index] += kernel_weight;
+                    maxDensity = std::max(maxDensity, density[index]);
                 }
             }
         }
-        // zaxis
-        for (int xStep = 0; xStep <= divisions; ++xStep) {
-            float x = -halfSize + xStep * step;
-            for (int yStep = 3; yStep <= 3; ++yStep) {
-                float y = 0;
-                for (int zStep = 0; zStep < divisions; ++zStep) {
-                    float zStart = -halfSize + zStep * step;
-                    float zEnd = zStart + step;
-                    vertices.push_back(x); vertices.push_back(y); vertices.push_back(zStart);
-                    vertices.push_back(x); vertices.push_back(y); vertices.push_back(zEnd);
-                }
-            }
+    }
+}
+void drawDensityMap() {
+    // 1. Set up for drawing quads
+    glBegin(GL_QUADS);
+
+    // 2. Iterate over the entire grid
+    for (int j = 0; j < GRID_H; ++j) {
+        for (int i = 0; i < GRID_W; ++i) {
+            int index = j * GRID_W + i;
+            float d = density[index];
+            vec3 color = densityToColour(d, maxDensity);
+            
+            // Set the color for the current cell (from blue for low to red for high)
+            glColor3f(color.r, color.g, color.b);
+
+            // Calculate cell boundaries in OpenGL coordinates 
+            // The coordinate system ranges from -WIDTH to WIDTH, and -HEIGHT to HEIGHT.
+            // A cell at (i, j) has a center at ((i * 2) - WIDTH, (j * 2) - HEIGHT)
+            
+            float x0 = i * 2.0f - GRID_W;
+            float y0 = j * 2.0f - GRID_H;
+            float x1 = (i + 1) * 2.0f - GRID_W;
+            float y1 = (j + 1) * 2.0f - GRID_H;
+
+            // Draw the quad for the cell
+            glVertex2f(x0, y0);
+            glVertex2f(x1, y0);
+            glVertex2f(x1, y1);
+            glVertex2f(x0, y1);
         }
-
-        return vertices;
-
     }
-};
-Grid grid;
-
-struct Particle {
-    GLuint VAO, VBO;
-    float radius; // in femtometers
-    vec4 color; // RGB values between 0 and 1
-    vec3 position; // in picometers
-    vector<float> vertices = DrawSphere();
-    string orbital = "";
-
-    Particle(float r, vec4 col, vec3 pos, string orbit = "") : radius(r), color(col), position(pos), orbital(orbit) {
-        engine.CreateVBOVAO(VAO, VBO, vertices.data(), vertices.size());
-    }
-    void Draw (GLint objectColorLoc, GLint modelLoc) {
-        glUniform4f(objectColorLoc, color.r, color.g, color.b, color.a);
-        glm::mat4 model = glm::mat4(1.0f);
-        model = glm::translate(model, position); // Apply position here
-        glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
-        glUniform1i(glGetUniformLocation(engine.shaderProgram, "GLOW"), 0);
-        glBindVertexArray(VAO);
-    }
-    vector<float> DrawSphere() {
-        std::vector<float> vertices;
-        int stacks = 25;
-        int sectors = 25;
-
-        for(float i = 0.0f; i <= stacks; ++i){
-            float theta1 = (i / stacks) * pi<float>();
-            float theta2 = (i+1) / stacks * pi<float>();
-            for (float j = 0.0f; j < sectors; ++j){
-                float phi1 = j / sectors * 2 * glm::pi<float>();
-                float phi2 = (j+1) / sectors * 2 * glm::pi<float>();
-                glm::vec3 v1 = engine.sphericalToCartesian(this->radius, theta1, phi1);
-                glm::vec3 v2 = engine.sphericalToCartesian(this->radius, theta1, phi2);
-                glm::vec3 v3 = engine.sphericalToCartesian(this->radius, theta2, phi1);
-                glm::vec3 v4 = engine.sphericalToCartesian(this->radius, theta2, phi2);    
-                // Triangle 1: v1-v2-v3
-                vertices.insert(vertices.end(), {v1.x, v1.y, v1.z}); //      /|
-                vertices.insert(vertices.end(), {v2.x, v2.y, v2.z}); //     / |
-                vertices.insert(vertices.end(), {v3.x, v3.y, v3.z}); //    /__|
-
-                // Triangle 2: v2-v4-v3
-                vertices.insert(vertices.end(), {v2.x, v2.y, v2.z});
-                vertices.insert(vertices.end(), {v4.x, v4.y, v4.z});
-                vertices.insert(vertices.end(), {v3.x, v3.y, v3.z});
-            }   
-        }
-        return vertices;
-    }
-};
-vector<Particle> particles{
-            // r   // color                      // position
-    Particle(8.7f, vec4(1.0f, 0.0f, 0.0f, 1.0f), vec3(0.0f, 0.0f, 0.0f)), // nucleus
-};
-
-struct Dumbbell {
-    GLuint VAO, VBO;
-    vec3 position;
-    vec4 color;
-    vector<float> vertices;
-    char axis;
-    float max2px;
-    float max2py;
-    float max2pz;
-
-    // New constructor signature
-    Dumbbell(float max2px, float max2py, float max2pz, char axis) : axis(axis), max2px(max2px), max2py(max2py), max2pz(max2pz)
-    {
-        vertices = DrawDumbell(); // No more arguments needed for DrawDumbell
-        engine.CreateVBOVAO(VAO, VBO, vertices.data(), vertices.size());
-
-        position = vec3(0.0f);
-        color = vec4(1.0f, 0.5f, 1.0f, 0.1f);
-    }
-    
-    void Draw(GLint objectColorLoc, GLint modelLoc) {
-        glUniform4f(objectColorLoc, color.r, color.g, color.b, color.a);
-        glm::mat4 model = glm::mat4(1.0f);
-        model = glm::translate(model, position);
-        glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
-        glBindVertexArray(VAO);
-        glLineWidth(2.0f); // optional: make lines thicker
-        glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(vertices.size() / 3)); // draw the stored line segments
-        glBindVertexArray(0);
-    }
-    
-    vector<float> DrawDumbell() {
-        vector<float> vertices;
-        int sectorCount = 36;
-        int stackCount = 18;
-
-        float rx = max2px / 2.0f; // radius x
-        float ry = max2py;        // radius y
-        float rz = max2pz;        // radius z
-        float centerX = rx;       // right sphere
-        float centerXMirror = -rx; // left sphere
-
-        // store points for one sphere
-        vector<vec3> points((stackCount + 1) * (sectorCount + 1));
-
-        // build first sphere
-        // vertices.push_back(rx);
-        // vertices.push_back(0.0);
-        // vertices.push_back(0.0);
-        // vertices.push_back(-rx);
-        // vertices.push_back(0.0);
-        // vertices.push_back(0.0);
-        for (int i = 0; i <= stackCount; ++i) {
-            float stackAngle = M_PI / 2 - i * (M_PI / stackCount);
-            float xy = cosf(stackAngle);
-            float y = ry * sinf(stackAngle);
-
-            for (int j = 0; j <= sectorCount; ++j) {
-                float sectorAngle = j * (2 * M_PI / sectorCount);
-                float x = rx * xy * cosf(sectorAngle) + centerX;
-                float z = rz * xy * sinf(sectorAngle);
-                points[i * (sectorCount + 1) + j] = vec3(x, y, z);
-            }
-        }
-
-        // build triangles for right sphere
-        for (int i = 0; i < stackCount; ++i) {
-            for (int j = 0; j < sectorCount; ++j) {
-                int first = i * (sectorCount + 1) + j;
-                int second = first + sectorCount + 1;
-
-                // triangle 1
-                vertices.push_back(points[first].x);
-                vertices.push_back(points[first].y);
-                vertices.push_back(points[first].z);
-
-                vertices.push_back(points[second].x);
-                vertices.push_back(points[second].y);
-                vertices.push_back(points[second].z);
-
-                vertices.push_back(points[first + 1].x);
-                vertices.push_back(points[first + 1].y);
-                vertices.push_back(points[first + 1].z);
-
-                // triangle 2
-                vertices.push_back(points[first + 1].x);
-                vertices.push_back(points[first + 1].y);
-                vertices.push_back(points[first + 1].z);
-
-                vertices.push_back(points[second].x);
-                vertices.push_back(points[second].y);
-                vertices.push_back(points[second].z);
-
-                vertices.push_back(points[second + 1].x);
-                vertices.push_back(points[second + 1].y);
-                vertices.push_back(points[second + 1].z);
-            }
-        }
-
-        // now build mirrored sphere by flipping X
-        for (int i = 0; i < points.size(); ++i) {
-            vec3 p = points[i];
-            p.x = -p.x; // mirror along x-axis
-            points[i] = p;
-        }
-
-        // build triangles for mirrored sphere
-        for (int i = 0; i < stackCount; ++i) {
-            for (int j = 0; j < sectorCount; ++j) {
-                int first = i * (sectorCount + 1) + j;
-                int second = first + sectorCount + 1;
-
-                // triangle 1
-                vertices.push_back(points[first].x);
-                vertices.push_back(points[first].y);
-                vertices.push_back(points[first].z);
-
-                vertices.push_back(points[second].x);
-                vertices.push_back(points[second].y);
-                vertices.push_back(points[second].z);
-
-                vertices.push_back(points[first + 1].x);
-                vertices.push_back(points[first + 1].y);
-                vertices.push_back(points[first + 1].z);
-
-                // triangle 2
-                vertices.push_back(points[first + 1].x);
-                vertices.push_back(points[first + 1].y);
-                vertices.push_back(points[first + 1].z);
-
-                vertices.push_back(points[second].x);
-                vertices.push_back(points[second].y);
-                vertices.push_back(points[second].z);
-
-                vertices.push_back(points[second + 1].x);
-                vertices.push_back(points[second + 1].y);
-                vertices.push_back(points[second + 1].z);
-            }
-        }
-
-        return vertices;
-    }
-
-};
-
-// ================= Probability functions ================= //
-float radialProbability1s(float r) {
-    float r_bohr = r / a0;
-    return 4.0 * r_bohr*r_bohr * exp(-2.0 * r_bohr);
-    //4 * r**2 * np.exp(-2 * r)
-}
-float radialProbability2s(float r) {
-    float r_bohr = r / a0;  // convert to Bohr radii
-    return 0.5f * pow(r_bohr, 2) * pow(1 - r_bohr / 2.0f, 2) * exp(-r_bohr);
-}
-float radialProbability2p(float r) {
-    float r_bohr = r / a0;  // convert to Bohr radii
-    return (pow(r_bohr, 4) / 24.0f) * exp(-r_bohr);
-}
-float radialProbability3p(float r) {
-    float x = r / a0;
-    float R = x * (1.0f - x / 6.0f) * exp(-x / 3.0f);
-    return R * R * r * r; // multiply by r^2 for probability density
+    glEnd();
 }
 
-float sampleR1s() {
-    float r_max = 5.0f * a0;  // arbitrary max radius
-    float P_max = radialProbability1s(0.0f); // max occurs at r ~ a0 (approx)
-    
-    while (true) {
-        float r = static_cast<float>(rand()) / RAND_MAX * r_max;
-        float y = static_cast<float>(rand()) / RAND_MAX * P_max;
-        if (y <= radialProbability1s(r)) return r;
-    }
-}
-float sampleR2s() {
-    float r_max = 10.0f * a0;  // 2s extends farther out than 1s
-    float P_max = radialProbability2s(a0); // rough peak near r ≈ a0
-
-    while (true) {
-        float r = static_cast<float>(rand()) / RAND_MAX * r_max;
-        float y = static_cast<float>(rand()) / RAND_MAX * P_max;
-        if (y <= radialProbability2s(r)) return r;
-    }
-}
-float sampleR2p() {
-    float r_max = 15.0f * a0;
-    float P_max = radialProbability2p(4.0f * a0);
-
-    while (true) {
-        float r = static_cast<float>(rand()) / RAND_MAX * r_max;
-        float y = static_cast<float>(rand()) / RAND_MAX * P_max;
-        if (y <= radialProbability2p(r)) return r;
-    }
-}
-float sampleR3p() {
-    float r_max = 25.0f * a0; // 3p orbitals extend farther than 2p
-    float P_max = radialProbability3p(8.0f * a0); // estimate peak around ~8a0
-
-    while (true) {
-        float r = static_cast<float>(rand()) / RAND_MAX * r_max;
-        float y = static_cast<float>(rand()) / RAND_MAX * P_max;
-        if (y <= radialProbability3p(r)) return r;
+void project_2d(const vector<vec3>& particles_3d, vector<vec2>& particles_2d) {
+    particles_2d.clear();
+    for (const vec3& p : particles_3d) {
+        // Use camera's projectTo2D instead of just XY
+        particles_2d.push_back(camera.projectTo2D(p, -engine.WIDTH, engine.WIDTH, -engine.HEIGHT, engine.HEIGHT));
     }
 }
 
-void sample1s() {   // change return type to void
-    float r = sampleR1s();
-    float theta = acos(1.0f - 2.0f * static_cast<float>(rand()) / RAND_MAX); // [0, pi]
-    float phi   = 2.0f * M_PI * static_cast<float>(rand()) / RAND_MAX;       // [0, 2pi]
-    vec3 electronPos = engine.sphericalToCartesian(r, theta, phi);
-    
-    // Construct Particle in-place
-    if (true) {
-        particles.emplace_back(electron_r, vec4(0.0f, 1.0f, 1.0f, 1.0f), electronPos, "1s"); // cyan-ish color
+
+void generateParticles(vector<vec3>& particles, int numParticles, int numClusters, float clusterRadius)
+{
+    particles.clear();
+
+    // 1. Simulation bounds converted to 3D
+    float minX = -engine.WIDTH;
+    float maxX = engine.WIDTH;
+
+    float minY = -engine.HEIGHT;
+    float maxY = engine.HEIGHT;
+
+    float minZ = -500;     // add this to your engine
+    float maxZ = 500;
+
+    // 2. Randomly pick cluster centers inside the 3D bounding box
+    std::vector<vec3> clusterCenters;
+    clusterCenters.reserve(numClusters);
+
+    for (int i = 0; i < numClusters; ++i) {
+        float x = minX + (std::rand() / (float)RAND_MAX) * (maxX - minX);
+        float y = minY + (std::rand() / (float)RAND_MAX) * (maxY - minY);
+        float z = minZ + (std::rand() / (float)RAND_MAX) * (maxZ - minZ);
+        clusterCenters.emplace_back(x, y, z);
+    }
+
+    // 3. Global (uniform) vs clustered particles
+    int globalParticles = numParticles / 3;
+    int clusteredParticles = numParticles - globalParticles;
+
+    // --- Global random 3D particles ---
+    for (int i = 0; i < globalParticles; ++i) {
+        float x = minX + (std::rand() / (float)RAND_MAX) * (maxX - minX);
+        float y = minY + (std::rand() / (float)RAND_MAX) * (maxY - minY);
+        float z = minZ + (std::rand() / (float)RAND_MAX) * (maxZ - minZ);
+        particles.emplace_back(x, y, z);
+    }
+
+    // --- Clustered 3D particles (uniform spherical distribution) ---
+    for (int i = 0; i < clusteredParticles; ++i) {
+        const vec3& center = clusterCenters[std::rand() % numClusters];
+
+        // Random direction on a sphere
+        float u = (std::rand() / (float)RAND_MAX) * 2.0f - 1.0f; // cos(theta)
+        float phi = (std::rand() / (float)RAND_MAX) * 2.0f * M_PI;
+
+        float sqrt1MinusU2 = sqrt(1 - u * u);
+        float dx = sqrt1MinusU2 * cos(phi);
+        float dy = sqrt1MinusU2 * sin(phi);
+        float dz = u;
+
+        // Random radius inside sphere (cube-root preserves uniform density)
+        float radius = clusterRadius * cbrt(std::rand() / (float)RAND_MAX);
+
+        particles.emplace_back(
+            center.x + dx * radius,
+            center.y + dy * radius,
+            center.z + dz * radius
+        );
     }
 }
-void sample2s() {
-    float r = sampleR2s();
-    float theta = acos(1.0f - 2.0f * static_cast<float>(rand()) / RAND_MAX); // [0, π]
-    float phi   = 2.0f * M_PI * static_cast<float>(rand()) / RAND_MAX;       // [0, 2π]
-    
-    vec3 electronPos = engine.sphericalToCartesian(r, theta, phi);
 
-    // Use a distinct color for visualization, e.g. yellow for 2s
-    if (true) {
-    particles.emplace_back(electron_r, vec4(0.0f, 1.0f, 1.0f, 1.0f), electronPos, "2s"); // cyan-ish color
-    }
-}
-void sample2p_x() {
-    float r = sampleR2p();
-
-    float theta, phi;
-
-    // --- sample theta ---
-    while (true) {
-        theta = acos(1.0f - 2.0f * static_cast<float>(rand()) / RAND_MAX); // [0, pi]
-        float prob = pow(sin(theta), 3); // sin^3(theta)
-        if (static_cast<float>(rand()) / RAND_MAX <= prob) break;
-    }
-
-    // --- sample phi ---
-    while (true) {
-        phi = 2.0f * M_PI * static_cast<float>(rand()) / RAND_MAX; // [0, 2pi]
-        float prob = pow(cos(phi), 2); // cos^2(phi)
-        if (static_cast<float>(rand()) / RAND_MAX <= prob) break;
-    }
-
-    vec3 electronPos = engine.sphericalToCartesian(r, theta, phi);
-
-    // Keep one lobe for visualization
-    if (true) {
-        particles.emplace_back(electron_r, vec4(1.0f, 0.0f, 0.0f, 1.0f), electronPos, "2p_x"); // red for 2p_x
-    }
-}
-void sample2p_y() {
-    float r = sampleR2p();
-
-    float theta, phi;
-
-    // --- sample theta ---
-    while (true) {
-        theta = acos(1.0f - 2.0f * static_cast<float>(rand()) / RAND_MAX); // [0, pi]
-        float prob = pow(sin(theta), 3); // sin^3(theta)
-        if (static_cast<float>(rand()) / RAND_MAX <= prob) break;
-    }
-
-    // --- sample phi --- (changed to sin^2 to orient along Y axis)
-    while (true) {
-        phi = 2.0f * M_PI * static_cast<float>(rand()) / RAND_MAX; // [0, 2pi]
-        float prob = pow(sin(phi), 2); // sin^2(phi) -> aligns lobes along Y
-        if (static_cast<float>(rand()) / RAND_MAX <= prob) break;
-    }
-
-    vec3 electronPos = engine.sphericalToCartesian(r, theta, phi);
-
-    // Keep one lobe for visualization
-    if (true) {
-        particles.emplace_back(electron_r, vec4(1.0f, 0.0f, 1.0f, 1.0f), electronPos, "2p_y"); // red for 2p_y (keeps existing color)
-    }
-}
-void sample2p_z() {
-    float r = sampleR2p();
-    float theta, phi;
-
-    // --- sample theta --- (weight with cos^2 to align lobes along Z)
-    while (true) {
-        theta = acos(1.0f - 2.0f * static_cast<float>(rand()) / RAND_MAX); // [0, pi]
-        float prob = pow(cos(theta), 2); // cos^2(theta)
-        if (static_cast<float>(rand()) / RAND_MAX <= prob) break;
-    }
-
-    // --- sample phi --- (uniform)
-    phi = 2.0f * M_PI * static_cast<float>(rand()) / RAND_MAX; // [0, 2pi]
-
-    vec3 electronPos = engine.sphericalToCartesian(r, theta, phi);
-
-    // Keep one lobe for visualization
-    particles.emplace_back(electron_r, vec4(0.0f, 1.0f, 1.0f, 1.0f), electronPos, "2p_z"); // red for 2p_z
-}
-
-void sample3p_z() {
-    float r = sampleR3p(); // 3p radial distribution
-    float theta, phi;
-
-    // --- sample theta --- (same angular part as 2p_z)
-    while (true) {
-        theta = acos(1.0f - 2.0f * static_cast<float>(rand()) / RAND_MAX); // [0, pi]
-        float prob = pow(cos(theta), 2); // cos^2(theta) for p_z alignment
-        if (static_cast<float>(rand()) / RAND_MAX <= prob) break;
-    }
-
-    // --- sample phi --- (uniform)
-    phi = 2.0f * M_PI * static_cast<float>(rand()) / RAND_MAX; // [0, 2pi]
-
-    vec3 electronPos = engine.sphericalToCartesian(r, theta, phi);
-
-    // visualize (different color for 3p_z)
-    particles.emplace_back(electron_r, vec4(1.0f, 0.0f, 0.0f, 1.0f), electronPos, "3p_z"); // cyan-ish for 3p_z
-}
 // ================= Main ================= //
 int main () {
     setupCameraCallbacks(engine.window);
-    GLint modelLoc = glGetUniformLocation(engine.shaderProgram, "model");
-    GLint objectColorLoc = glGetUniformLocation(engine.shaderProgram, "objectColor");
-    glUseProgram(engine.shaderProgram);
+    
+    
 
-    // ---- GENERATE PARTICLES ---- //
-    for (int i = 0; i < 2000; ++i) {
-        //sample1s();
-        //sample2s();
-        //sample2p_x();
-        //sample2p_y();
-        //sample2p_z();
-        //sample3p_z();
-        // sample1s();
-        // sample1s();
-        // sample2s();
-        // sample2s();
-        // sample2p_x();
-        // sample2p_x();
+    // ----- Generate particles -----
+    vector<vec3> particles_3d;
+    //generateParticles(particles_3d, 10000, 5, 300.0f);
+    for (int i = 0; i < 2000; i++) {
+        //atom.sample1s(particles_3d);
+        atom.sample2p_y(particles_3d);
+        //atom.sample3p_z(particles_3d);
     }
 
-    // -------- MAIN LOOP -------- //
-    auto lastSampleTime = std::chrono::steady_clock::now();
-    const std::chrono::milliseconds sampleInterval(100); // 0.1s
-
+    // ------- 1. Declare 2D projection -------------------
+    vector<vec2> particles;
     
-    // 2p
-    float max2px = 0.0f;
-    float max2py = 0.0f;
-    float max2pz = 0.0f;
 
-
-    float maxRad1s = 0.0f;
-    float maxRad2s = 0.0f;
-
-
-    // ------------------ RENDERING LOOP ------------------
     while (!glfwWindowShouldClose(engine.window)) {
-        // maxRad1s = 0.0f;
-        // maxRad2s = 0.0f;
         engine.run();
 
-        // ---- DRAW GRID ----
-        //grid.Draw(objectColorLoc);
 
-        // ---- SAMPLE NEW PARTICLES PERIODICALLY ----
-        sample1s();
-        sample1s();
-        sample2s();
-        sample2s();
-        sample2p_x();
-        sample2p_x();
-        sample2p_y();
-        sample2p_y();
+        // -------- project 3D to 2D and recalculate density --------
+        project_2d(particles_3d, particles);
+        calculateDensityMap(particles);
 
-        // ------------------ DRAW PARTICLES ------------------
-        for (auto& p : particles) {
-            p.Draw(objectColorLoc, modelLoc);
-            glDrawArrays(GL_TRIANGLES, 0, p.vertices.size() / 3);
-            if (p.orbital == "1s") {
-                float r = length(p.position);
-                if (r > maxRad1s) {
-                    maxRad1s = r;
-                }
-            }
-            if (p.orbital == "2s") {
-                float r = length(p.position);
-                if (r > maxRad2s) {
-                    maxRad2s = r;
-                }
-            }
-            if (p.orbital == "2p_x") {
-                if (p.position.x > max2px) {
-                    max2px = p.position.x;
-                }
-                if (p.position.y > max2py) {
-                    max2py = p.position.y;
-                }
-                if (p.position.z > max2pz) {
-                    max2pz = p.position.z;
-                }
-            }
-        
-        }
-        
+        // ------- 1. Draw the density map -------------------
+        drawDensityMap();
+
+        // ------- 2. Draw the particles -------------------
+        glColor4f(1.0f, 1.0f, 1.0f, 0.3f);
+        for (const vec2& p : particles)
+            engine.drawFilledCircle(p.x, p.y, 1.0f);
 
 
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        glDepthMask(GL_FALSE); // disable depth writes for transparency
 
-        
-        // ------------------ DRAW ORBITALS ------------------
-        Particle orbital = Particle(maxRad1s, vec4(1.0f, 1.0f, 0.0f, 0.1f), vec3(0.0f, 0.0f, 0.0f));
-        orbital.Draw(objectColorLoc, modelLoc);
-        glDrawArrays(GL_TRIANGLES, 0, orbital.vertices.size() / 3);
-        glBindVertexArray(0);
 
-        Particle orbital2 = Particle(maxRad2s, vec4(0.0f, 1.0f, 1.0f, 0.1f), vec3(0.0f, 0.0f, 0.0f));
-        orbital2.Draw(objectColorLoc, modelLoc);
-        glDrawArrays(GL_TRIANGLES, 1, orbital2.vertices.size() / 3);
-        glBindVertexArray(1);
-
-        Dumbbell dumb(max2px, max2py, max2pz, 'x');
-        dumb.Draw(objectColorLoc, modelLoc);
-        //cout<< "max x rad: " << max2px << "   maxyrad:  "<< max2py << "maxzrad:" << max2pz<<endl;
-        
-
-        // particles.erase(particles.begin() + 1, particles.end());
-
-        glDepthMask(GL_TRUE);
-        glDisable(GL_BLEND);
         glfwSwapBuffers(engine.window);
         glfwPollEvents();
     }
 
-    // ---- CLEAN UP ----
-    for (auto& p : particles) {
-        glDeleteVertexArrays(1, &p.VAO);
-        glDeleteBuffers(1, &p.VBO);
-    }
-
-    
-    glfwDestroyWindow(engine.window);
-    glfwTerminate();
     return 0;
 }
+
+

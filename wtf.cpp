@@ -25,19 +25,6 @@ const float a0 = 52.9f; // Bohr radius in pm
 const float electron_r = 2.0f;
 const float fieldRes = 25.0f;
 
-// sahders cuz imports suc
-const char* g_fullscreen_vert_src = R"(
-#version 330 core
-// The DrawFullscreenQuad helper uses layout(location=0) for pos and (location=1) for tex
-layout (location = 0) in vec2 aPos;
-layout (location = 1) in vec2 aTexCoord;
-out vec2 TexCoord;
-void main() {
-    gl_Position = vec4(aPos, 0.0, 1.0);
-    TexCoord = aTexCoord;
-}
-)";
-
 // ================= Engine ================= //
 struct Particle;
 static GLuint g_fullscreenVAO = 0;
@@ -149,20 +136,49 @@ struct SplatRenderer {
     }
 
     // upload particle positions each frame
-    // void updatePositions(vector<Particle>& atoms) {
-    //     vector<vec3> positions;
-    //     for (const auto& atom : atoms) {
-    //         positions.push_back(atom.position);
-    //     }
-    //     glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    //     // Orphan + buffer subdata for streaming
-    //     glBufferData(GL_ARRAY_BUFFER, capacity * 3 * sizeof(float), nullptr, GL_STREAM_DRAW);
-    //     glBufferSubData(GL_ARRAY_BUFFER, 0, positions.size() * sizeof(glm::vec3), positions.data());
-    //     glBindBuffer(GL_ARRAY_BUFFER, 0);
-    // }
-    void render(std::vector<Particle>& atoms,
-                    const glm::mat4& view, const glm::mat4& proj,
-                    float pointScreenSize = 40.0f, float intensity = 1.0f, float sigma = 0.25f);
+    void updatePositions(const vector<Particle>& atoms) {
+        vector<vec3> positions;
+        for (const auto& atom : atoms) {
+            positions.push_back(atom.position);
+        }
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        // Orphan + buffer subdata for streaming
+        glBufferData(GL_ARRAY_BUFFER, capacity * 3 * sizeof(float), nullptr, GL_STREAM_DRAW);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, positions.size() * sizeof(glm::vec3), positions.data());
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+
+    // draw into current FBO (assumes correct viewport already set)
+    void render(const vector<Particle>& atoms,
+                const mat4& view, const mat4& proj,
+                float pointScreenSize = 40.0f, float intensity = 1.0f, float sigma = 0.25f) {
+        vector<vec3> positions;
+        for (const auto& atom : atoms) {
+            positions.push_back(atom.position);
+        }
+        if (positions.empty()) return;
+        glUseProgram(program);
+        GLint loc;
+
+        loc = glGetUniformLocation(program, "view");
+        if (loc != -1) glUniformMatrix4fv(loc, 1, GL_FALSE, &view[0][0]);
+        loc = glGetUniformLocation(program, "projection");
+        if (loc != -1) glUniformMatrix4fv(loc, 1, GL_FALSE, &proj[0][0]);
+        loc = glGetUniformLocation(program, "pointScreenSize");
+        if (loc != -1) glUniform1f(loc, pointScreenSize);
+        loc = glGetUniformLocation(program, "intensity");
+        if (loc != -1) glUniform1f(loc, intensity);
+        loc = glGetUniformLocation(program, "sigma");
+        if (loc != -1) glUniform1f(loc, sigma);
+
+        // update VBO and draw
+        //updatePositions(positions);
+        glBindVertexArray(vao);
+        glEnable(GL_PROGRAM_POINT_SIZE);
+        glDrawArrays(GL_POINTS, 0, (GLsizei)positions.size());
+        glBindVertexArray(0);
+        glUseProgram(0);
+    }
 };
 struct DensityField {
     GLuint fbo = 0;
@@ -656,60 +672,7 @@ vector<Particle> particles{
     Particle(8.7f, vec4(1.0f, 0.0f, 0.0f, 1.0f), vec3(0.0f, 0.0f, 0.0f)), // nucleus
 };
 
-// draw into current FBO (assumes correct viewport already set)
-void SplatRenderer::render(vector<Particle>& atoms, const mat4& view, const mat4& proj, float pointScreenSize, float intensity, float sigma) {
-    // This is the implementation you provided:
-    vector<vec3> positions;
-    for (const auto& atom : atoms) {
-        positions.push_back(atom.position);
-    }
-    if (positions.empty()) return;
-    glUseProgram(program);
-    GLint loc;
 
-    loc = glGetUniformLocation(program, "view");
-    if (loc != -1) glUniformMatrix4fv(loc, 1, GL_FALSE, &view[0][0]);
-    loc = glGetUniformLocation(program, "projection");
-    if (loc != -1) glUniformMatrix4fv(loc, 1, GL_FALSE, &proj[0][0]);
-    loc = glGetUniformLocation(program, "pointScreenSize");
-    if (loc != -1) glUniform1f(loc, pointScreenSize);
-    loc = glGetUniformLocation(program, "intensity");
-    if (loc != -1) glUniform1f(loc, intensity);
-    loc = glGetUniformLocation(program, "sigma");
-    if (loc != -1) glUniform1f(loc, sigma);
-
-    // update VBO and draw
-    // updatePositions(atoms);
-    glBindVertexArray(vao);
-    glEnable(GL_PROGRAM_POINT_SIZE);
-    glDrawArrays(GL_POINTS, 0, (GLsizei)positions.size());
-    glBindVertexArray(0);
-    glUseProgram(0);
-}
-GLuint DensityField::CreateSplatProgram() {
-    // Links splat.vert and splat.frag
-    std::string vsrc = ReadFile("splat.vert");
-    std::string fsrc = ReadFile("splat.frag");
-    GLuint vs = CompileShader(vsrc.c_str(), GL_VERTEX_SHADER);
-    GLuint fs = CompileShader(fsrc.c_str(), GL_FRAGMENT_SHADER);
-    return LinkProgram(vs, fs);
-}
-
-GLuint DensityField::CreateBlurProgram() {
-    // Links the generic fullscreen vertex shader and blur.frag
-    std::string fsrc = ReadFile("blur.frag");
-    GLuint vs = CompileShader(g_fullscreen_vert_src, GL_VERTEX_SHADER);
-    GLuint fs = CompileShader(fsrc.c_str(), GL_FRAGMENT_SHADER);
-    return LinkProgram(vs, fs);
-}
-
-GLuint DensityField::CreateCompositeProgram() {
-    // Links the generic fullscreen vertex shader and composite.frag
-    std::string fsrc = ReadFile("composite.frag");
-    GLuint vs = CompileShader(g_fullscreen_vert_src, GL_VERTEX_SHADER);
-    GLuint fs = CompileShader(fsrc.c_str(), GL_FRAGMENT_SHADER);
-    return LinkProgram(vs, fs);
-}
 
 struct Dumbbell {
     GLuint VAO, VBO;

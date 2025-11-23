@@ -225,87 +225,87 @@ struct MapVal {
 
 
 struct Atom {
-
-
-   vec3 pos;
-   int atomicNum = 0;
-
-
-   Atom(vec3 pos, int atomicNum) : pos(pos), atomicNum(atomicNum) {}
-   // ================= Probability functions ================= //
-   float radialProbability1s(float r) {
-       float r_bohr = r / a0;
-       return 4.0 * r_bohr*r_bohr * exp(-2.0 * r_bohr);
-       //4 * r**2 * np.exp(-2 * r)
-   }
-   float radialProbability2s(float r) {
-       float r_bohr = r / a0;  // convert to Bohr radii
-       return 0.5f * pow(r_bohr, 2) * pow(1 - r_bohr / 2.0f, 2) * exp(-r_bohr);
-   }
-   float radialProbability2p(float r) {
-       float r_bohr = r / a0;  // convert to Bohr radii
-       return (pow(r_bohr, 4) / 24.0f) * exp(-r_bohr);
-   }
-   float radialProbability3s(float r) {
-       float x = r / a0;
-       float R = (1.0f - (2.0f/3.0f)*x + (2.0f/27.0f)*x*x) * exp(-x / 3.0f);
-       return R * R * r * r;
-   }
-   float radialProbability3p(float r) {
-       float x = r / a0;
-       float R = x * (1.0f - x / 6.0f) * exp(-x / 3.0f);
-       return R * R * r * r; // multiply by r^2 for probability density
-   }
-   float radialProbability3dxy(float r) {
-       float x = r / a0;
-       float R = x*x * (6.0f - x) * exp(-x / 3.0f); // 3d radial part
-       return R * R * r * r; // multiply by r^2 for probability density
-   }
-
-   float sampleR1s() {
-       float r_max = 5.0f * a0;  // arbitrary max radius
-       float P_max = radialProbability1s(0.0f); // max occurs at r ~ a0 (approx)
-      
-       while (true) {
-           float r = static_cast<float>(rand()) / RAND_MAX * r_max;
-           float y = static_cast<float>(rand()) / RAND_MAX * P_max;
-           if (y <= radialProbability1s(r)) return r;
-       }
-   }
-   float sampleR2s() {
-       float r_max = 10.0f * a0;  // 2s extends farther out than 1s
-       float P_max = radialProbability2s(a0); // rough peak near r ≈ a0
-
-
-       while (true) {
-           float r = static_cast<float>(rand()) / RAND_MAX * r_max;
-           float y = static_cast<float>(rand()) / RAND_MAX * P_max;
-           if (y <= radialProbability2s(r)) return r;
-       }
-   }
-   float sampleR3s() {
-       float r_max = 20.0f * a0;  // 3s extends farther than 1s/2s
-       float P_max = radialProbability3s(3.0f * a0); // near the 3s radial peak
-
-
-       while (true) {
-           float r = static_cast<float>(rand()) / RAND_MAX * r_max;
-           float y = static_cast<float>(rand()) / RAND_MAX * P_max;
-           if (y <= radialProbability3s(r)) return r;
-       }
-   }
-   float sampleR2p() {
-       float r_max = 15.0f * a0;
-       float P_max = radialProbability2p(4.0f * a0);
-
-
-       while (true) {
-           float r = static_cast<float>(rand()) / RAND_MAX * r_max;
-           float y = static_cast<float>(rand()) / RAND_MAX * P_max;
-           if (y <= radialProbability2p(r)) return r;
-       }
-   }
-   float sampleR3p() {
+    
+    
+    vec3 pos;
+    int atomicNum = 0;
+    
+    
+    Atom(vec3 pos, int atomicNum) : pos(pos), atomicNum(atomicNum) {}
+    // ================= Probability functions ================= //
+    float radialProbability1s(float r) {
+        float r_bohr = r / a0;
+        return 4.0 * r_bohr*r_bohr * exp(-2.0 * r_bohr);
+        //4 * r**2 * np.exp(-2 * r)
+    }
+    float radialProbability2s(float r) {
+        float r_bohr = r / a0;  // convert to Bohr radii
+        return 0.5f * pow(r_bohr, 2) * pow(1 - r_bohr / 2.0f, 2) * exp(-r_bohr);
+    }
+    float radialProbability2p(float r) {
+        float r_bohr = r / a0;  // convert to Bohr radii
+        return (pow(r_bohr, 4) / 24.0f) * exp(-r_bohr);
+    }
+    float radialProbability3s(float r) {
+        float x = r / a0;
+        float R = (1.0f - (2.0f/3.0f)*x + (2.0f/27.0f)*x*x) * exp(-x / 3.0f);
+        return R * R * r * r;
+    }
+    float radialProbability3p(float r) {
+        float x = r / a0;
+        float R = x * (1.0f - x / 6.0f) * exp(-x / 3.0f);
+        return R * R * r * r; // multiply by r^2 for probability density
+    }
+    float radialProbability3dxy(float r) {
+        float x = r / a0;
+        float R = x*x * (6.0f - x) * exp(-x / 3.0f); // 3d radial part
+        return R * R * r * r; // multiply by r^2 for probability density
+    }
+   
+    float sampleR1s() {
+        float r_max = 5.0f * a0;  // arbitrary max radius
+        float P_max = radialProbability1s(0.0f); // max occurs at r ~ a0 (approx)
+       
+        while (true) {
+            float r = static_cast<float>(rand()) / RAND_MAX * r_max;
+            float y = static_cast<float>(rand()) / RAND_MAX * P_max;
+            if (y <= radialProbability1s(r)) return r;
+        }
+    }
+    float sampleR2s() {
+        float r_max = 10.0f * a0;  // 2s extends farther out than 1s
+        float P_max = radialProbability2s(a0); // rough peak near r ≈ a0
+    
+    
+        while (true) {
+            float r = static_cast<float>(rand()) / RAND_MAX * r_max;
+            float y = static_cast<float>(rand()) / RAND_MAX * P_max;
+            if (y <= radialProbability2s(r)) return r;
+        }
+    }
+    float sampleR3s() {
+        float r_max = 20.0f * a0;  // 3s extends farther than 1s/2s
+        float P_max = radialProbability3s(3.0f * a0); // near the 3s radial peak
+    
+    
+        while (true) {
+            float r = static_cast<float>(rand()) / RAND_MAX * r_max;
+            float y = static_cast<float>(rand()) / RAND_MAX * P_max;
+            if (y <= radialProbability3s(r)) return r;
+        }
+    }
+    float sampleR2p() {
+        float r_max = 15.0f * a0;
+        float P_max = radialProbability2p(4.0f * a0);
+    
+    
+        while (true) {
+            float r = static_cast<float>(rand()) / RAND_MAX * r_max;
+            float y = static_cast<float>(rand()) / RAND_MAX * P_max;
+            if (y <= radialProbability2p(r)) return r;
+        }
+    }
+    float sampleR3p() {
        float r_max = 25.0f * a0; // 3p orbitals extend farther than 2p
        float P_max = radialProbability3p(8.0f * a0); // estimate peak around ~8a0
 
@@ -315,18 +315,22 @@ struct Atom {
            float y = static_cast<float>(rand()) / RAND_MAX * P_max;
            if (y <= radialProbability3p(r)) return r;
        }
-   }
-   float sampleR3dxy() {
-       float r_max = 30.0f * a0; // slightly bigger than 3p
-       float P_max = radialProbability3dxy(12.0f * a0); // rough peak estimate
+    }
+    float sampleR3d() {
+        // set a generous r_max
+        float r_max = 30.0f * a0;
+        // true peak for 3d radial probability occurs at r = 9 a0
+        float P_max = radialProbability3dxy(9.0f * a0);
 
+        while (true) {
+            float u1 = static_cast<float>(rand()) / RAND_MAX; // [0,1)
+            float r = u1 * r_max;
+            float u2 = static_cast<float>(rand()) / RAND_MAX;
+            float y = u2 * P_max;
+            if (y <= radialProbability3dxy(r)) return r;
+        }
+    }
 
-       while (true) {
-           float r = static_cast<float>(rand()) / RAND_MAX * r_max;
-           float y = static_cast<float>(rand()) / RAND_MAX * P_max;
-           if (y <= radialProbability3dxy(r)) return r;
-       }
-   }
 
    void sample1s(vector<Particle> &particles) {   // change return type to void
        float r = sampleR1s();
@@ -520,26 +524,85 @@ struct Atom {
        particles.emplace_back( Particle(electronPos, color) ); // cyan-ish for 3p_z
    }
   
-   void sample3dxy(vector<Particle> &particles) {
-       float r = sampleR3dxy();
-       float theta, phi;
+    void sample3dxy( vector<Particle> &particles) {
+        float r = sampleR3d();
 
+        float theta, phi;
+        while (true) {
+            float u = static_cast<float>(rand()) / RAND_MAX;
+            float v = static_cast<float>(rand()) / RAND_MAX;
+            theta = acosf(1.0f - 2.0f * u);
+            phi = 2.0f * M_PI * v; 
+            
+            float s = sinf(theta);
+            float angProb = (s * s) * (s * s) * (sinf(2.0f * phi) * sinf(2.0f * phi));
 
-       while (true) {
-           theta = acos(1.0f - 2.0f * static_cast<float>(rand()) / RAND_MAX); // [0, pi]
-           phi = 2.0f * M_PI * static_cast<float>(rand()) / RAND_MAX;         // [0, 2pi]
+            float rcheck = static_cast<float>(rand()) / RAND_MAX;
+            if (rcheck <= angProb) break;
+        }
 
+        vec3 electronPos = engine.sphericalToCartesian(r, theta, phi);
 
-           float prob = pow(sin(theta), 2) * pow(sin(phi), 2); // 3dxy angular distribution
-           if (static_cast<float>(rand()) / RAND_MAX <= prob) break;
-       }
+        vec3 color(0.0f, 1.0f, 1.0f);
+        particles.emplace_back( Particle(electronPos, color) ); 
+    }
+    void sample3dxz( vector<Particle> &particles) {
+        float r = sampleR3d();
 
+        float theta, phi;
+        while (true) {
+            float u = float(rand()) / RAND_MAX;
+            float v = float(rand()) / RAND_MAX;
 
-       vec3 electronPos = engine.sphericalToCartesian(r, theta, phi) + pos;
-       vec3 color = vec3(1.0f, 1.0f, 1.0f);
+            theta = acosf(1.0f - 2.0f * u);
+            phi = 2.0f * M_PI * v;
 
-       particles.emplace_back( Particle(electronPos, color) ); // can color differently for 3dxy
-   }
+            float s = sinf(theta);
+            float c = cosf(theta);
+
+            // Angular probability for d_xz:
+            // |ψ|² ∝ sin²θ * cos²θ * cos²φ
+            float angProb =
+                (s * s) * (c * c) *
+                (cosf(phi) * cosf(phi));
+
+            if ((float(rand()) / RAND_MAX) <= angProb)
+                break;
+        }
+
+        vec3 electronPos = engine.sphericalToCartesian(r, theta, phi);
+        vec3 color(0.0f, 1.0f, 1.0f);
+        particles.emplace_back( Particle(electronPos, color) ); 
+    }
+    void sample3dyz( vector<Particle> &particles) {
+        float r = sampleR3d();
+
+        float theta, phi;
+        while (true) {
+            float u = float(rand()) / RAND_MAX;
+            float v = float(rand()) / RAND_MAX;
+
+            theta = acosf(1.0f - 2.0f * u);
+            phi = 2.0f * M_PI * v;
+
+            float s = sinf(theta);
+            float c = cosf(theta);
+
+            // Angular probability for d_yz:
+            // |ψ|² ∝ sin²θ * cos²θ * sin²φ
+            float angProb =
+                (s * s) * (c * c) *
+                (sinf(phi) * sinf(phi));
+
+            if ((float(rand()) / RAND_MAX) <= angProb)
+                break;
+        }
+
+        vec3 electronPos = engine.sphericalToCartesian(r, theta, phi);
+        vec3 color(0.0f, 1.0f, 1.0f);
+        particles.emplace_back( Particle(electronPos, color) ); 
+    }
+
 };
 vector<Atom> atoms = {
 
@@ -723,8 +786,6 @@ void drawDensityMap() {
 }
 
 
-
-
 void project_2d(const vector<Particle>& particles_3d, vector<Particle_2d>& particles_2d) {
    particles_2d.clear();
 
@@ -823,7 +884,6 @@ void initRandom() {
    srand(static_cast<unsigned int>(time(0)));
 }
 
-
 // Generate a random unit vector
 vec3 randomUnitVector() {
    float theta = static_cast<float>(rand()) / RAND_MAX * 2.0f * glm::pi<float>(); // 0 to 2pi
@@ -908,16 +968,20 @@ int main () {
 
 
     //addCH4(vec3(0.0f));
-    addCH4(vec3(0.0f, 0.0f, 0.0f));
-    addWater(vec3(0.0f, 0.0f, 2000.0f));
-    addCO2(vec3(0.0f, 0.0f, -2000.0f));
+    // addCH4(vec3(0.0f, 0.0f, 0.0f));
+    atoms = {
+        Atom(vec3(0.0f), 102)
+    };
+    //addWater(vec3(0.0f, 0.0f, 2000.0f));
+    //addCO2(vec3(0.0f, 0.0f, -2000.0f));
+    
 
     // ----- Generate particles -----
     vector<Particle> particles_3d;
     vector<Particle> particles3p_x_3d;
     //generateParticles(particles_3d, 10000, 5, 300.0f);
     for (Atom & atom : atoms) {
-        for (int i = 0; i < 200; i++) {
+        for (int i = 0; i < 10000; i++) {
             if (atom.atomicNum == 1) 
                 atom.sample1s(particles_3d);
             else if (atom.atomicNum == 6) {
@@ -936,10 +1000,8 @@ int main () {
                 atom.sample2p_x(particles_3d);
                 atom.sample2p_y(particles_3d);
                 atom.sample2p_z(particles_3d);
-            }
-            // atom.sample3p_x(particles_3d);
-            // atom.sample3p_y(particles_3d);
-            // atom.sample3p_z(particles_3d);
+            } else if(atom.atomicNum == 102)
+                atom.sample3dxy(particles_3d);
         }
     }
 

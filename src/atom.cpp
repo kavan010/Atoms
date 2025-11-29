@@ -8,12 +8,17 @@
 #include <cmath>
 #include <cstdlib>
 #include <ctime>
+#include <iomanip>
+#include <thread>
+#include <chrono>
+#include <fstream>
+#include <nlohmann/json.hpp>
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 using namespace glm;
 using namespace std;
-
+using json = nlohmann::json;
 
 const float a0 = 52.9f; // Bohr radius in pm
 
@@ -204,7 +209,6 @@ struct Engine {
 Engine engine;
 
 
-
 struct Particle {
     vec3 pos;
     vec3 color = vec3(1.0f, 0.0f, 0.0f);
@@ -224,394 +228,6 @@ struct MapVal {
 };
 
 
-struct Atom {
-    
-    
-    vec3 pos;
-    int atomicNum = 0;
-    
-    
-    Atom(vec3 pos, int atomicNum) : pos(pos), atomicNum(atomicNum) {}
-    // ================= Probability functions ================= //
-    float radialProbability1s(float r) {
-        float r_bohr = r / a0;
-        return 4.0 * r_bohr*r_bohr * exp(-2.0 * r_bohr);
-        //4 * r**2 * np.exp(-2 * r)
-    }
-    float radialProbability2s(float r) {
-        float r_bohr = r / a0;  // convert to Bohr radii
-        return 0.5f * pow(r_bohr, 2) * pow(1 - r_bohr / 2.0f, 2) * exp(-r_bohr);
-    }
-    float radialProbability2p(float r) {
-        float r_bohr = r / a0;  // convert to Bohr radii
-        return (pow(r_bohr, 4) / 24.0f) * exp(-r_bohr);
-    }
-    float radialProbability3s(float r) {
-        float x = r / a0;
-        float R = (1.0f - (2.0f/3.0f)*x + (2.0f/27.0f)*x*x) * exp(-x / 3.0f);
-        return R * R * r * r;
-    }
-    float radialProbability3p(float r) {
-        float x = r / a0;
-        float R = x * (1.0f - x / 6.0f) * exp(-x / 3.0f);
-        return R * R * r * r; // multiply by r^2 for probability density
-    }
-    float radialProbability3dxy(float r) {
-        float x = r / a0;
-        float R = x*x * (6.0f - x) * exp(-x / 3.0f); // 3d radial part
-        return R * R * r * r; // multiply by r^2 for probability density
-    }
-   
-    float sampleR1s() {
-        float r_max = 5.0f * a0;  // arbitrary max radius
-        float P_max = radialProbability1s(0.0f); // max occurs at r ~ a0 (approx)
-       
-        while (true) {
-            float r = static_cast<float>(rand()) / RAND_MAX * r_max;
-            float y = static_cast<float>(rand()) / RAND_MAX * P_max;
-            if (y <= radialProbability1s(r)) return r;
-        }
-    }
-    float sampleR2s() {
-        float r_max = 10.0f * a0;  // 2s extends farther out than 1s
-        float P_max = radialProbability2s(a0); // rough peak near r ≈ a0
-    
-    
-        while (true) {
-            float r = static_cast<float>(rand()) / RAND_MAX * r_max;
-            float y = static_cast<float>(rand()) / RAND_MAX * P_max;
-            if (y <= radialProbability2s(r)) return r;
-        }
-    }
-    float sampleR3s() {
-        float r_max = 20.0f * a0;  // 3s extends farther than 1s/2s
-        float P_max = radialProbability3s(3.0f * a0); // near the 3s radial peak
-    
-    
-        while (true) {
-            float r = static_cast<float>(rand()) / RAND_MAX * r_max;
-            float y = static_cast<float>(rand()) / RAND_MAX * P_max;
-            if (y <= radialProbability3s(r)) return r;
-        }
-    }
-    float sampleR2p() {
-        float r_max = 15.0f * a0;
-        float P_max = radialProbability2p(4.0f * a0);
-    
-    
-        while (true) {
-            float r = static_cast<float>(rand()) / RAND_MAX * r_max;
-            float y = static_cast<float>(rand()) / RAND_MAX * P_max;
-            if (y <= radialProbability2p(r)) return r;
-        }
-    }
-    float sampleR3p() {
-       float r_max = 25.0f * a0; // 3p orbitals extend farther than 2p
-       float P_max = radialProbability3p(8.0f * a0); // estimate peak around ~8a0
-
-
-       while (true) {
-           float r = static_cast<float>(rand()) / RAND_MAX * r_max;
-           float y = static_cast<float>(rand()) / RAND_MAX * P_max;
-           if (y <= radialProbability3p(r)) return r;
-       }
-    }
-    float sampleR3d() {
-        // set a generous r_max
-        float r_max = 30.0f * a0;
-        // true peak for 3d radial probability occurs at r = 9 a0
-        float P_max = radialProbability3dxy(9.0f * a0);
-
-        while (true) {
-            float u1 = static_cast<float>(rand()) / RAND_MAX; // [0,1)
-            float r = u1 * r_max;
-            float u2 = static_cast<float>(rand()) / RAND_MAX;
-            float y = u2 * P_max;
-            if (y <= radialProbability3dxy(r)) return r;
-        }
-    }
-
-
-   void sample1s(vector<Particle> &particles) {   // change return type to void
-       float r = sampleR1s();
-       float theta = acos(1.0f - 2.0f * static_cast<float>(rand()) / RAND_MAX); // [0, pi]
-       float phi   = 2.0f * M_PI * static_cast<float>(rand()) / RAND_MAX;       // [0, 2pi]
-       vec3 electronPos = engine.sphericalToCartesian(r, theta, phi) + pos;
-       vec3 color(0.0f, 1.0f, 1.0f); // cyan-ish color for 1s
-      
-       // Construct Particle in-place
-       if (true) {
-           particles.emplace_back(  Particle(electronPos, color ) ); // cyan-ish color
-       }
-   }
-   void sample2s(vector<Particle> &particles) {
-       float r = sampleR2s();
-       float theta = acos(1.0f - 2.0f * static_cast<float>(rand()) / RAND_MAX); // [0, π]
-       float phi   = 2.0f * M_PI * static_cast<float>(rand()) / RAND_MAX;       // [0, 2π]
-      
-       vec3 electronPos = engine.sphericalToCartesian(r, theta, phi) + pos;
-       vec3 color(1.0f, 0.0f, 1.0f); // magenta-ish color
-
-       // Use a distinct color for visualization, e.g. yellow for 2s
-       if (true) {
-       particles.emplace_back( Particle(electronPos, color )); // cyan-ish color
-       }
-   }
-   void sample3s(vector<Particle> &particles) {
-        float r = sampleR3s();
-
-        // Uniform spherical angle distribution
-        float theta = acos(1.0f - 2.0f * static_cast<float>(rand()) / RAND_MAX);
-        float phi   = 2.0f * M_PI * static_cast<float>(rand()) / RAND_MAX;
-
-        vec3 pos = engine.sphericalToCartesian(r, theta, phi) + pos;
-        vec3 color(1.0f, 1.0f, 0.0f); // yellow-ish color for 3s
-
-        particles.emplace_back( Particle(pos, color) );
-   }
-   void sample2p_x(vector<Particle> &particles) {
-       float r = sampleR2p();
-
-
-       float theta, phi;
-
-
-       // --- sample theta ---
-       while (true) {
-           theta = acos(1.0f - 2.0f * static_cast<float>(rand()) / RAND_MAX); // [0, pi]
-           float prob = pow(sin(theta), 3); // sin^3(theta)
-           if (static_cast<float>(rand()) / RAND_MAX <= prob) break;
-       }
-
-
-       // --- sample phi ---
-       while (true) {
-           phi = 2.0f * M_PI * static_cast<float>(rand()) / RAND_MAX; // [0, 2pi]
-           float prob = pow(cos(phi), 2); // cos^2(phi)
-           if (static_cast<float>(rand()) / RAND_MAX <= prob) break;
-       }
-
-
-       vec3 electronPos = engine.sphericalToCartesian(r, theta, phi) + pos;
-       vec3 color(1.0f, 0.0f, 0.0f); // red color for 2p_x
-
-
-       // Keep one lobe for visualization
-       if (true) {
-           particles.emplace_back(  Particle(electronPos, color) ); // red for 2p_x
-       }
-   }
-   void sample2p_y(vector<Particle> &particles) {
-       float r = sampleR2p();
-
-
-       float theta, phi;
-
-
-       // --- sample theta ---
-       while (true) {
-           theta = acos(1.0f - 2.0f * static_cast<float>(rand()) / RAND_MAX); // [0, pi]
-           float prob = pow(sin(theta), 3); // sin^3(theta)
-           if (static_cast<float>(rand()) / RAND_MAX <= prob) break;
-       }
-
-
-       // --- sample phi --- (changed to sin^2 to orient along Y axis)
-       while (true) {
-           phi = 2.0f * M_PI * static_cast<float>(rand()) / RAND_MAX; // [0, 2pi]
-           float prob = pow(sin(phi), 2); // sin^2(phi) -> aligns lobes along Y
-           if (static_cast<float>(rand()) / RAND_MAX <= prob) break;
-       }
-
-
-       vec3 electronPos = engine.sphericalToCartesian(r, theta, phi) + pos;
-       vec3 color(1.0f, 0.0f, 0.0f); // red color for 2p_y
-
-
-       // Keep one lobe for visualization
-       if (true) {
-           particles.emplace_back( Particle(electronPos, color) ); // red for 2p_y (keeps existing color)
-       }
-   }
-   void sample2p_z(vector<Particle> &particles) {
-       float r = sampleR2p();
-       float theta, phi;
-
-
-       // --- sample theta --- (weight with cos^2 to align lobes along Z)
-       while (true) {
-           theta = acos(1.0f - 2.0f * static_cast<float>(rand()) / RAND_MAX); // [0, pi]
-           float prob = pow(cos(theta), 2); // cos^2(theta)
-           if (static_cast<float>(rand()) / RAND_MAX <= prob) break;
-       }
-
-
-       // --- sample phi --- (uniform)
-       phi = 2.0f * M_PI * static_cast<float>(rand()) / RAND_MAX; // [0, 2pi]
-
-
-       vec3 electronPos = engine.sphericalToCartesian(r, theta, phi) + pos;
-       vec3 color(1.0f, 0.0f, 0.0f); // red color for 2p_z
-
-       // Keep one lobe for visualization
-       particles.emplace_back(Particle(electronPos, color)); // red for 2p_z
-   }
-
-   void sample3p_x(vector<Particle> &particles) {
-       float r = sampleR3p(); // 3p radial distribution
-       float theta, phi;
-
-
-       // sample theta and phi
-       while (true) {
-           theta = acos(1.0f - 2.0f * static_cast<float>(rand()) / RAND_MAX); // [0, pi]
-           phi   = 2.0f * M_PI * static_cast<float>(rand()) / RAND_MAX;       // [0, 2pi]
-
-
-           float prob = pow(sin(theta) * cos(phi), 2); // sin^2(theta) * cos^2(phi)
-           if (static_cast<float>(rand()) / RAND_MAX <= prob) break;
-       }
-
-
-       vec3 electronPos = engine.sphericalToCartesian(r, theta, phi) + pos;
-       vec3 color(1.0f, 0.0f, 1.0f); // blue-ish
-
-       particles.emplace_back(Particle(electronPos, color)); // assign a color for 3p_x
-   }
-   void sample3p_y(vector<Particle> &particles) {
-       float r = sampleR3p(); // 3p radial distribution
-       float theta, phi;
-
-
-       // sample theta and phi
-       while (true) {
-           theta = acos(1.0f - 2.0f * static_cast<float>(rand()) / RAND_MAX); // [0, pi]
-           phi   = 2.0f * M_PI * static_cast<float>(rand()) / RAND_MAX;       // [0, 2pi]
-
-
-           float prob = pow(sin(theta) * sin(phi), 2); // sin^2(theta) * sin^2(phi)
-           if (static_cast<float>(rand()) / RAND_MAX <= prob) break;
-       }
-
-
-       vec3 electronPos = engine.sphericalToCartesian(r, theta, phi) + pos;
-       vec3 color(0.7f, 0.0f, 1.0f); // blue-ish
-
-       particles.emplace_back(Particle(electronPos, color)); // assign a color for 3p_y
-   }
-   void sample3p_z(vector<Particle> &particles) {
-       float r = sampleR3p(); // 3p radial distribution
-       float theta, phi;
-
-
-       // --- sample theta --- (same angular part as 2p_z)
-       while (true) {
-           theta = acos(1.0f - 2.0f * static_cast<float>(rand()) / RAND_MAX); // [0, pi]
-           float prob = pow(cos(theta), 2); // cos^2(theta) for p_z alignment
-           if (static_cast<float>(rand()) / RAND_MAX <= prob) break;
-       }
-
-
-       // --- sample phi --- (uniform)
-       phi = 2.0f * M_PI * static_cast<float>(rand()) / RAND_MAX; // [0, 2pi]
-
-
-       vec3 electronPos = engine.sphericalToCartesian(r, theta, phi) + pos;
-       vec3 color(1.0f, 1.0f, 0.0f);
-
-
-       // visualize (different color for 3p_z)
-       particles.emplace_back( Particle(electronPos, color) ); // cyan-ish for 3p_z
-   }
-  
-    void sample3dxy( vector<Particle> &particles) {
-        float r = sampleR3d();
-
-        float theta, phi;
-        while (true) {
-            float u = static_cast<float>(rand()) / RAND_MAX;
-            float v = static_cast<float>(rand()) / RAND_MAX;
-            theta = acosf(1.0f - 2.0f * u);
-            phi = 2.0f * M_PI * v; 
-            
-            float s = sinf(theta);
-            float angProb = (s * s) * (s * s) * (sinf(2.0f * phi) * sinf(2.0f * phi));
-
-            float rcheck = static_cast<float>(rand()) / RAND_MAX;
-            if (rcheck <= angProb) break;
-        }
-
-        vec3 electronPos = engine.sphericalToCartesian(r, theta, phi);
-
-        vec3 color(0.0f, 1.0f, 1.0f);
-        particles.emplace_back( Particle(electronPos, color) ); 
-    }
-    void sample3dxz( vector<Particle> &particles) {
-        float r = sampleR3d();
-
-        float theta, phi;
-        while (true) {
-            float u = float(rand()) / RAND_MAX;
-            float v = float(rand()) / RAND_MAX;
-
-            theta = acosf(1.0f - 2.0f * u);
-            phi = 2.0f * M_PI * v;
-
-            float s = sinf(theta);
-            float c = cosf(theta);
-
-            // Angular probability for d_xz:
-            // |ψ|² ∝ sin²θ * cos²θ * cos²φ
-            float angProb =
-                (s * s) * (c * c) *
-                (cosf(phi) * cosf(phi));
-
-            if ((float(rand()) / RAND_MAX) <= angProb)
-                break;
-        }
-
-        vec3 electronPos = engine.sphericalToCartesian(r, theta, phi);
-        vec3 color(0.0f, 1.0f, 1.0f);
-        particles.emplace_back( Particle(electronPos, color) ); 
-    }
-    void sample3dyz( vector<Particle> &particles) {
-        float r = sampleR3d();
-
-        float theta, phi;
-        while (true) {
-            float u = float(rand()) / RAND_MAX;
-            float v = float(rand()) / RAND_MAX;
-
-            theta = acosf(1.0f - 2.0f * u);
-            phi = 2.0f * M_PI * v;
-
-            float s = sinf(theta);
-            float c = cosf(theta);
-
-            // Angular probability for d_yz:
-            // |ψ|² ∝ sin²θ * cos²θ * sin²φ
-            float angProb =
-                (s * s) * (c * c) *
-                (sinf(phi) * sinf(phi));
-
-            if ((float(rand()) / RAND_MAX) <= angProb)
-                break;
-        }
-
-        vec3 electronPos = engine.sphericalToCartesian(r, theta, phi);
-        vec3 color(0.0f, 1.0f, 1.0f);
-        particles.emplace_back( Particle(electronPos, color) ); 
-    }
-
-};
-vector<Atom> atoms = {
-
-   //Atom(vec3(0.0f, 0.0f, 0.0f), 6),
-   // Atom(vec3(0.0f, 2500.0f, 0.0f))
-};
-
-
-
 
 // ================= Callbacks ================= //
 void setupCameraCallbacks(GLFWwindow* window) {
@@ -623,7 +239,6 @@ void setupCameraCallbacks(GLFWwindow* window) {
        cam->processMouseButton(button, action, mods, win);
    });
 
-
    // flip Y here so Camera sees bottom-left origin coordinates
    glfwSetCursorPosCallback(window, [](GLFWwindow* win, double x, double y) {
        Camera* cam = (Camera*)glfwGetWindowUserPointer(win);
@@ -632,7 +247,6 @@ void setupCameraCallbacks(GLFWwindow* window) {
        double yf = (double)wh - y;
        cam->processMouseMove(x, yf);
    });
-
 
    glfwSetScrollCallback(window, [](GLFWwindow* win, double xoffset, double yoffset) {
        Camera* cam = (Camera*)glfwGetWindowUserPointer(win);
@@ -653,6 +267,36 @@ const float CELL_H = 1.0f;
 vector<MapVal> density(GRID_W * GRID_H);
 float maxDensity = 1.0f;
 
+vector<Particle> LoadWavefunction(const string& filename) {
+    vector<Particle> pts;
+    std::ifstream file("orbitals/" + filename);
+    if (!file.is_open()) {
+        cerr << "Failed to open JSON file: " << filename << endl;
+        return pts;
+    }
+
+    json j;
+    file >> j;
+
+    const float bohr_to_pm = 152.9f;
+
+    for (auto& point : j["points"]) {
+        float x = point[0].get<float>() * bohr_to_pm;
+        float y = point[1].get<float>() * bohr_to_pm;
+        float z = point[2].get<float>() * bohr_to_pm;
+
+        // Particle radius (small for electrons)
+        float radius = 1.0f;
+
+        // Color: blue for electron
+        vec4 color = vec4(0.2f, 0.5f, 1.0f, 1.0f);
+        //vec4 color = vec4(1.0f, 1.0f, 0.0f, 1.0f);
+
+        pts.emplace_back(vec3(x, y, z), color);
+    }
+
+    return pts;
+}
 
 // ================= Density map functions ================= //
 vec3 densityToColour(float d, float maxD, vec3 color) {
@@ -912,99 +556,11 @@ void generateTetrahedralDirs(vec3 dirs[4]) {
 }
 
 
-// ======= molecules =======
-void addCO2(vec3 centre) {
-   atoms.emplace_back(centre, 6); // Carbon
-
-
-   float bondLength = 465.0f;
-   vec3 dir1, dir2;
-   generateDirs(dir1, dir2, 180.0f); // CO2 is linear, O-C-O ~180°
-
-
-   atoms.emplace_back(centre + dir1 * bondLength, 8); // Oxygen
-   atoms.emplace_back(centre + dir2 * bondLength, 8); // Oxygen
-}
-void addCH4(vec3 centre) {
-   atoms.emplace_back(centre, 6); // Carbon
-
-
-   float bondLength = 410.0f; // approximate C-H bond length in your units
-   vec3 dirs[4];
-
-
-   // Generate four directions for tetrahedral geometry (~109.5° between bonds)
-   generateTetrahedralDirs(dirs);
-
-
-   // Place Hydrogens
-   for (int i = 0; i < 4; ++i) {
-       atoms.emplace_back(centre + dirs[i] * bondLength, 1); // Hydrogen
-   }
-}
-void addWater(vec3 centre) {
-   atoms.emplace_back(centre, 8); // Oxygen
-
-
-   float bondLength = 95.9f * 4.5f; // H-O bond ~0.96Å scaled up
-
-
-   vec3 dir1, dir2;
-   generateDirs(dir1, dir2, 104.5f); // H-O-H bond ~104.5°
-
-
-   atoms.emplace_back( centre + dir1 * bondLength, 1); // Hydrogen
-   atoms.emplace_back(centre + dir2 * bondLength, 1); // Hydrogen
-}
-
-
 // ================= Main ================= //
 int main () {
     setupCameraCallbacks(engine.window);
     
-    const int numMolecules = 50;   // number of water molecules
-    const float spacing = 2000.0f; // approximate distance between molecules
-    vector<vec3> molecules;
-
-
-    //addCH4(vec3(0.0f));
-    // addCH4(vec3(0.0f, 0.0f, 0.0f));
-    atoms = {
-        Atom(vec3(0.0f), 102)
-    };
-    //addWater(vec3(0.0f, 0.0f, 2000.0f));
-    //addCO2(vec3(0.0f, 0.0f, -2000.0f));
-    
-
-    // ----- Generate particles -----
-    vector<Particle> particles_3d;
-    vector<Particle> particles3p_x_3d;
-    //generateParticles(particles_3d, 10000, 5, 300.0f);
-    for (Atom & atom : atoms) {
-        for (int i = 0; i < 10000; i++) {
-            if (atom.atomicNum == 1) 
-                atom.sample1s(particles_3d);
-            else if (atom.atomicNum == 6) {
-                atom.sample1s(particles_3d);
-                atom.sample1s(particles_3d);
-                atom.sample2s(particles_3d);
-                atom.sample2s(particles_3d);
-                atom.sample2p_x(particles_3d);
-                atom.sample2p_y(particles_3d);
-            } else if (atom.atomicNum == 8) {
-                atom.sample1s(particles_3d);
-                atom.sample1s(particles_3d);
-                atom.sample2s(particles_3d);
-                atom.sample2s(particles_3d);
-                atom.sample2p_x(particles_3d);
-                atom.sample2p_x(particles_3d);
-                atom.sample2p_y(particles_3d);
-                atom.sample2p_z(particles_3d);
-            } else if(atom.atomicNum == 102)
-                atom.sample3dxy(particles_3d);
-        }
-    }
-
+    vector<Particle> particles_3d = LoadWavefunction("orbital_n3_l2_m0.json");
 
     // ------- 1. Declare 2D projection -------------------
     vector<Particle_2d> particles;

@@ -8,8 +8,10 @@
             "args": [
                 "-fdiagnostics-color=always",
                 "-g",
+                //"${workspaceFolder}/src/atom.cpp",
                 "${workspaceFolder}/src/atom.cpp",
                 "-o",
+                //"${workspaceFolder}/bin/atom.exe",
                 "${workspaceFolder}/bin/atom.exe",
                 "-IC:/msys64/mingw64/include",
                 "-LC:/msys64/mingw64/lib",

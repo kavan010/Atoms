@@ -532,7 +532,7 @@ struct Dumbbell {
 };
 
 
-// ================= Probability functions ================= //
+// ================= Radial Probability ================= //
 float radialProbability1s(float r) {
    float r_bohr = r / a0;
    return 4.0 * r_bohr*r_bohr * exp(-2.0 * r_bohr);
@@ -556,7 +556,7 @@ float radialProbability3p(float r) {
    float R = x * (1.0f - x / 6.0f) * exp(-x / 3.0f);
    return R * R * r * r; // multiply by r^2 for probability density
 }
-float radialProbability3dxy(float r) {
+float radialProbability3d(float r) {
     float x = r / a0;                // dimensionless
     // normalization constant (float)
     const float C = (2.0f * sqrtf(5.0f) / 405.0f); // prefactor in R
@@ -564,8 +564,14 @@ float radialProbability3dxy(float r) {
     // radial probability density used for sampling = r^2 * |R|^2
     return (r * r) * (R * R);
 }
+float radialProbability4f(float r) {
+    float x = r / a0;
+    const float C = 1.0f / (96.0f * sqrtf(70.0f) * powf(a0, 3));
+    float R = C * powf(x, 3) * expf(-x/4.0f);  // Hydrogenic 4f
+    return r*r * R*R;
+}
 
-
+// ================= Sample Probability ================= //
 float sampleR1s() {
    float r_max = 5.0f * a0;  // arbitrary max radius
    float P_max = radialProbability1s(0.0f); // max occurs at r ~ a0 (approx)
@@ -628,18 +634,29 @@ float sampleR3d() {
     // set a generous r_max
     float r_max = 30.0f * a0;
     // true peak for 3d radial probability occurs at r = 9 a0
-    float P_max = radialProbability3dxy(9.0f * a0);
+    float P_max = radialProbability3d(9.0f * a0);
 
     while (true) {
         float u1 = static_cast<float>(rand()) / RAND_MAX; // [0,1)
         float r = u1 * r_max;
         float u2 = static_cast<float>(rand()) / RAND_MAX;
         float y = u2 * P_max;
-        if (y <= radialProbability3dxy(r)) return r;
+        if (y <= radialProbability3d(r)) return r;
+    }
+}
+float sampleR4f() { 
+    const float maxR = 30.0f * a0; // increase max radius
+    const float maxP = 0.0001f; // increase according to normalized probability
+
+    while (true) {
+        float r = ((float)rand() / RAND_MAX) * maxR;
+        float y = ((float)rand() / RAND_MAX) * 0.00015f; // slightly above peak
+        if (y <= radialProbability4f(r))
+            return r;
     }
 }
 
-
+// ================= Render Probability ================= //
 void sample1s(vector<Particle> &particles1) {   // change return type to void
    float r = sampleR1s();
    float theta = acos(1.0f - 2.0f * static_cast<float>(rand()) / RAND_MAX); // [0, pi]
@@ -648,7 +665,7 @@ void sample1s(vector<Particle> &particles1) {   // change return type to void
     
    // Construct Particle in-place
    if (true) {
-       particles1.emplace_back(  Particle(electron_r, vec4(0.0f, 1.0f, 1.0f, 1.0f), electronPos ) ); // cyan-ish color
+       particles1.emplace_back(  Particle(electron_r, vec4(1.0f, 0.0f, 1.0f, 1.0f), electronPos ) ); // cyan-ish color
    }
 }
 void sample2s(vector<Particle> &particles1) {
@@ -775,9 +792,6 @@ void sample2p_z(vector<Particle> &particles1) {
    // Keep one lobe for visualization
        particles1.emplace_back(  Particle(electron_r, vec4(0.0f, 1.0f, 1.0f, 1.0f), electronPos ) );   
 }
-
-
-
 
 void sample3p_x( vector<Particle> &particles1) {
    float r = sampleR3p(); // 3p radial distribution
@@ -923,7 +937,199 @@ void sample3dyz( vector<Particle> &particles) {
     vec3 pos = engine.sphericalToCartesian(r, theta, phi);
     particles.emplace_back(Particle(electron_r, vec4(1,0,0.5,1), pos));
 }
+void sample3dx2y2(vector<Particle> &particles) {
+    float r = sampleR3d();
 
+    float theta, phi;
+    while (true) {
+        float u = float(rand()) / RAND_MAX;
+        float v = float(rand()) / RAND_MAX;
+
+        theta = acosf(1.0f - 2.0f * u); // polar
+        phi   = 2.0f * M_PI * v;        // azimuthal
+
+        float s = sinf(theta);
+        
+        // |ψ|² ∝ sin^4θ * cos^2(2φ)
+        float angProb =
+            (s * s) * (s * s) *
+            (cosf(2.0f * phi) * cosf(2.0f * phi));
+
+        if ((float(rand()) / RAND_MAX) <= angProb)
+            break;
+    }
+
+    vec3 pos = engine.sphericalToCartesian(r, theta, phi);
+    particles.emplace_back(
+        Particle(electron_r, vec4(0.2, 0.7, 1.0, 1.0), pos)
+    );
+}
+void sample3dz2(vector<Particle> &particles) {
+    float r = sampleR3d();
+
+    float theta, phi;
+    while (true) {
+        float u = float(rand()) / RAND_MAX;
+        float v = float(rand()) / RAND_MAX;
+
+        theta = acosf(1.0f - 2.0f * u);
+        phi   = 2.0f * M_PI * v;
+
+        float c = cosf(theta);
+
+        // |ψ|² ∝ (3cos^2θ - 1)^2
+        float t = (3.0f * c * c - 1.0f);
+        float angProb = t * t;
+
+        if ((float(rand()) / RAND_MAX) <= angProb)
+            break;
+    }
+
+    vec3 pos = engine.sphericalToCartesian(r, theta, phi);
+    particles.emplace_back(
+        Particle(electron_r, vec4(1.0, 0.3, 0.1, 1.0), pos)
+    );
+}
+
+void sample4fx5z2(vector<Particle> &particles) {
+    float r = sampleR4f(); // placeholder radial
+
+    float theta, phi;
+    while(true) {
+        float u = float(rand())/RAND_MAX;
+        float v = float(rand())/RAND_MAX;
+        theta = acosf(1.0f - 2.0f*u);
+        phi = 2.0f * M_PI * v;
+
+        float s = sinf(theta);
+        float c = cosf(theta);
+        float angProb = (s*s) * c * (5.0f*c*c - 1.0f) * (5.0f*c*c - 1.0f) * cosf(phi) * cosf(phi);
+
+        if((float(rand())/RAND_MAX) <= angProb) break;
+    }
+
+    vec3 pos = engine.sphericalToCartesian(r, theta, phi);
+    particles.emplace_back(Particle(electron_r, vec4(1.0,0.5,0.2,1.0), pos));
+}
+void sample4fy5z2(vector<Particle> &particles) {
+    float r = sampleR4f();
+
+    float theta, phi;
+    while(true) {
+        float u = float(rand())/RAND_MAX;
+        float v = float(rand())/RAND_MAX;
+        theta = acosf(1.0f - 2.0f*u);
+        phi = 2.0f * M_PI * v;
+
+        float s = sinf(theta);
+        float c = cosf(theta);
+        float angProb = (s*s) * c * (5.0f*c*c - 1.0f) * (5.0f*c*c - 1.0f) * sinf(phi) * sinf(phi);
+
+        if((float(rand())/RAND_MAX) <= angProb) break;
+    }
+
+    vec3 pos = engine.sphericalToCartesian(r, theta, phi);
+    particles.emplace_back(Particle(electron_r, vec4(0.5,1.0,0.2,1.0), pos));
+}
+void sample4fzx2y2(vector<Particle> &particles) {
+    float r = sampleR4f();
+
+    float theta, phi;
+    while(true) {
+        float u = float(rand())/RAND_MAX;
+        float v = float(rand())/RAND_MAX;
+        theta = acosf(1.0f - 2.0f*u);
+        phi = 2.0f * M_PI * v;
+
+        float s = sinf(theta);
+        float c = cosf(theta);
+        float angProb = s*s*s*s * c * (cosf(2*phi)*cosf(2*phi));
+
+        if((float(rand())/RAND_MAX) <= angProb) break;
+    }
+
+    vec3 pos = engine.sphericalToCartesian(r, theta, phi);
+    particles.emplace_back(Particle(electron_r, vec4(0.2,0.8,1.0,1.0), pos));
+}
+void sample4fxz2(vector<Particle> &particles) {
+    float r = sampleR4f();
+
+    float theta, phi;
+    while(true) {
+        float u = float(rand())/RAND_MAX;
+        float v = float(rand())/RAND_MAX;
+        theta = acosf(1.0f - 2.0f*u);
+        phi = 2.0f * M_PI * v;
+
+        float s = sinf(theta);
+        float c = cosf(theta);
+        float angProb = (s*s*s) * (c*c) * cosf(phi) * cosf(phi);
+
+        if((float(rand())/RAND_MAX) <= angProb) break;
+    }
+
+    vec3 pos = engine.sphericalToCartesian(r, theta, phi);
+    particles.emplace_back(Particle(electron_r, vec4(1.0,0.2,0.8,1.0), pos));
+}
+void sample4fyz2(vector<Particle> &particles) {
+    float r = sampleR4f();
+
+    float theta, phi;
+    while(true) {
+        float u = float(rand())/RAND_MAX;
+        float v = float(rand())/RAND_MAX;
+        theta = acosf(1.0f - 2.0f*u);
+        phi = 2.0f * M_PI * v;
+
+        float s = sinf(theta);
+        float c = cosf(theta);
+        float angProb = (s*s*s) * (c*c) * sinf(phi) * sinf(phi);
+
+        if((float(rand())/RAND_MAX) <= angProb) break;
+    }
+
+    vec3 pos = engine.sphericalToCartesian(r, theta, phi);
+    particles.emplace_back(Particle(electron_r, vec4(0.8,0.2,1.0,1.0), pos));
+}
+void sample4fx3y2(vector<Particle> &particles) {
+    float r = sampleR4f();
+    float theta, phi;
+    while(true) {
+        float u = float(rand())/RAND_MAX;
+        float v = float(rand())/RAND_MAX;
+        theta = acosf(1.0f - 2.0f*u);
+        phi = 2.0f * M_PI * v;
+
+        float s = sinf(theta);
+        // Real 4f_x(x^2-3y^2) proportional factor
+        float angProb = powf(s*s*s * cosf(phi) * (cosf(phi)*cosf(phi) - 3*sinf(phi)*sinf(phi)), 2);
+
+        if((float(rand())/RAND_MAX) <= angProb) break;
+    }
+
+    vec3 pos = engine.sphericalToCartesian(r, theta, phi);
+    particles.emplace_back(Particle(electron_r, vec4(0.2,1.0,0.8,1.0), pos));
+}
+void sample4fy3x2(vector<Particle> &particles) {
+    float r = sampleR4f();
+
+    float theta, phi;
+    while(true) {
+        float u = float(rand())/RAND_MAX;
+        float v = float(rand())/RAND_MAX;
+        theta = acosf(1.0f - 2.0f*u);
+        phi = 2.0f * M_PI * v;
+
+        float s = sinf(theta);
+        float angProb = s*s*s * sinf(phi) * (3*cosf(phi)*cosf(phi) - sinf(phi)*sinf(phi));
+        angProb *= angProb;
+
+        if((float(rand())/RAND_MAX) <= angProb) break;
+    }
+
+    vec3 pos = engine.sphericalToCartesian(r, theta, phi);
+    particles.emplace_back(Particle(electron_r, vec4(1.0,0.8,0.2,1.0), pos));
+}
 
 // ================= Main ================= //
 int main () {
@@ -935,9 +1141,9 @@ int main () {
 
     // ---- GENERATE PARTICLES ---- //
     for (int i = 0; i < 10000; ++i) {
-        // sample1s(particles);
+        //sample1s(particles);
         // sample3dxy(particles);
-        sample3dxz(particles);
+        sample4fx3y2(particles);
         // sample3dyz(particles);
 
     }

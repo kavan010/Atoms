@@ -524,26 +524,6 @@ struct Atom {
        particles.emplace_back( Particle(electronPos, color) ); // cyan-ish for 3p_z
    }
   
-   void sample3dxy(vector<Particle> &particles) {
-       float r = sampleR3dxy();
-       float theta, phi;
-
-
-       while (true) {
-           theta = acos(1.0f - 2.0f * static_cast<float>(rand()) / RAND_MAX); // [0, pi]
-           phi = 2.0f * M_PI * static_cast<float>(rand()) / RAND_MAX;         // [0, 2pi]
-
-
-           float prob = pow(sin(theta), 2) * pow(sin(phi), 2); // 3dxy angular distribution
-           if (static_cast<float>(rand()) / RAND_MAX <= prob) break;
-       }
-
-
-       vec3 electronPos = engine.sphericalToCartesian(r, theta, phi) + pos;
-       vec3 color = vec3(1.0f, 1.0f, 1.0f);
-
-       particles.emplace_back( Particle(electronPos, color) ); // can color differently for 3dxy
-   }
     void sample3dxy( vector<Particle> &particles) {
         float r = sampleR3d();
 
@@ -563,7 +543,7 @@ struct Atom {
 
         vec3 electronPos = engine.sphericalToCartesian(r, theta, phi);
 
-        vec3 color(1.0f, 1.0f, 0.0f);
+        vec3 color(0.0f, 1.0f, 1.0f);
         particles.emplace_back( Particle(electronPos, color) ); 
     }
     void sample3dxz( vector<Particle> &particles) {
@@ -591,7 +571,7 @@ struct Atom {
         }
 
         vec3 electronPos = engine.sphericalToCartesian(r, theta, phi);
-        vec3 color(1.0f, 1.0f, 0.0f);
+        vec3 color(0.0f, 1.0f, 1.0f);
         particles.emplace_back( Particle(electronPos, color) ); 
     }
     void sample3dyz( vector<Particle> &particles) {
@@ -619,7 +599,7 @@ struct Atom {
         }
 
         vec3 electronPos = engine.sphericalToCartesian(r, theta, phi);
-        vec3 color(1.0f, 1.0f, 0.0f);
+        vec3 color(0.0f, 1.0f, 1.0f);
         particles.emplace_back( Particle(electronPos, color) ); 
     }
 
@@ -806,8 +786,6 @@ void drawDensityMap() {
 }
 
 
-
-
 void project_2d(const vector<Particle>& particles_3d, vector<Particle_2d>& particles_2d) {
    particles_2d.clear();
 
@@ -906,7 +884,6 @@ void initRandom() {
    srand(static_cast<unsigned int>(time(0)));
 }
 
-
 // Generate a random unit vector
 vec3 randomUnitVector() {
    float theta = static_cast<float>(rand()) / RAND_MAX * 2.0f * glm::pi<float>(); // 0 to 2pi
@@ -991,16 +968,20 @@ int main () {
 
 
     //addCH4(vec3(0.0f));
-    addCH4(vec3(0.0f, 0.0f, 0.0f));
+    // addCH4(vec3(0.0f, 0.0f, 0.0f));
+    atoms = {
+        Atom(vec3(0.0f), 102)
+    };
     //addWater(vec3(0.0f, 0.0f, 2000.0f));
     //addCO2(vec3(0.0f, 0.0f, -2000.0f));
+    
 
     // ----- Generate particles -----
     vector<Particle> particles_3d;
     vector<Particle> particles3p_x_3d;
     //generateParticles(particles_3d, 10000, 5, 300.0f);
     for (Atom & atom : atoms) {
-        for (int i = 0; i < 200; i++) {
+        for (int i = 0; i < 5000; i++) {
             if (atom.atomicNum == 1) 
                 atom.sample1s(particles_3d);
             else if (atom.atomicNum == 6) {
@@ -1019,10 +1000,10 @@ int main () {
                 atom.sample2p_x(particles_3d);
                 atom.sample2p_y(particles_3d);
                 atom.sample2p_z(particles_3d);
-            }
-            // atom.sample3p_x(particles_3d);
-            // atom.sample3p_y(particles_3d);
-            // atom.sample3p_z(particles_3d);
+            } else if(atom.atomicNum == 102)
+                //atom.sample3dxy(particles_3d);
+                //atom.sample3dxz(particles_3d);
+                atom.sample3dyz(particles_3d);
         }
     }
 

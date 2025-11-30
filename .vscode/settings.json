@@ -78,6 +78,7 @@
         "set": "cpp",
         "mutex": "cpp",
         "__config": "cpp",
-        "fstream": "cpp"
+        "fstream": "cpp",
+        "any": "cpp"
     }
 }

@@ -323,7 +323,7 @@ vector<Particle> LoadWavefunction(const string& filename) {
 
         // Color: blue for electron
         //vec4 color = vec4(0.2f, 0.5f, 1.0f, 1.0f);
-        vec4 color = vec4(1.0f, 1.0f, 0.0f, 1.0f);
+        vec4 color = vec4(1.0f, 0.0f, 1.0f, 1.0f);
 
         pts.emplace_back(radius, color, vec3(x, y, z));
     }
@@ -479,7 +479,7 @@ int main () {
     GLint objectColorLoc = glGetUniformLocation(engine.shaderProgram, "objectColor");
     glUseProgram(engine.shaderProgram);
 
-    vector<Particle> particles = LoadWavefunction("orbital_n6_l4_m1.json");
+    vector<Particle> particles = LoadWavefunction("orbital_n7_l4_m0.json");
 
     // ------------------ RENDERING LOOP ------------------
     while (!glfwWindowShouldClose(engine.window)) {

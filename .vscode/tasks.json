@@ -9,10 +9,10 @@
                 "-fdiagnostics-color=always",
                 "-g",
                 //"${workspaceFolder}/src/atom.cpp",
-                "${workspaceFolder}/src/atom.cpp",
+                "${workspaceFolder}/src/atom.cpp",           // here
                 "-o",
                 //"${workspaceFolder}/bin/atom.exe",
-                "${workspaceFolder}/bin/atom.exe",
+                "${workspaceFolder}/bin/atom.exe",           // here
                 "-IC:/msys64/mingw64/include",
                 "-LC:/msys64/mingw64/lib",
                 "-lglfw3",

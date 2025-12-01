@@ -24,8 +24,6 @@ const float c = 299792458.0f / 100000000.0f;    // speed of light in m/s
 const float eu = 2.71828182845904523536f; // Euler's number
 const float k = 8.9875517923e9f; // Coulomb's constant
 const float a0 = 52.9f; // Bohr radius in pm
-const float electron_r = 2.0f;
-const float fieldRes = 25.0f;
 
 // ================= Engine ================= //
 
@@ -346,51 +344,6 @@ struct Grid {
 };
 Grid grid;
 
-void drawParticle(vec3 particle, GLint modelLoc, GLint objectColorLoc) {
-    // Draw each particle
-    glUniform4f(objectColorLoc, 1.0f, 1.0f, 1.0f, 1.0f); // Red color for particles
-    glm::mat4 model = glm::mat4(1.0f);
-    model = glm::translate(model, particle);
-    model = glm::scale(model, glm::vec3(2.0f)); // Scale to make it visible
-    glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
-
-    // Draw a simple point for the particle
-    glPointSize(1.0f);
-    glBegin(GL_POINTS);
-    glVertex3f(0.0f, 0.0f, 0.0f);
-    glEnd();
-}
-vector<vec3> LoadWavefunction(const string& filename) {
-    vector<vec3> pts;
-    std::ifstream file("orbitals/" + filename);
-    if (!file.is_open()) {
-        cerr << "Failed to open JSON file: " << filename << endl;
-        return pts;
-    }
-
-    json j;
-    file >> j;
-
-    const float bohr_to_pm = 5.29f;
-
-    for (auto& point : j["points"]) {
-        float x = point[0].get<float>() * bohr_to_pm;
-        float y = point[1].get<float>() * bohr_to_pm;
-        float z = point[2].get<float>() * bohr_to_pm;
-
-        // Particle radius (small for electrons)
-        float radius = 1.0f;
-
-        // Color: blue for electron
-        //vec4 color = vec4(0.2f, 0.5f, 1.0f, 1.0f);
-        vec4 color = vec4(1.0f, 0.0f, 1.0f, 1.0f);
-
-        pts.emplace_back(vec3(x, y, z));
-    }
-
-    return pts;
-}
-
 // ================= Main ================= //
 int main () {
     setupCameraCallbacks(engine.window);
@@ -399,8 +352,6 @@ int main () {
     glUseProgram(engine.shaderProgram);
 
     
-    vector<vec3> particles = LoadWavefunction("orbital_n3_l2_m0.json");
-
     // ------------------ RENDERING LOOP ------------------
     while (!glfwWindowShouldClose(engine.window)) {
         engine.run();
@@ -409,10 +360,6 @@ int main () {
         grid.Draw(objectColorLoc);
 
 
-        // ---- 2. Draw particles -------------------
-        for (const auto& particle : particles) {
-            drawParticle(particle, modelLoc, objectColorLoc);
-        }
 
         glfwSwapBuffers(engine.window);
         glfwPollEvents();

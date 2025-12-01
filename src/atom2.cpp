@@ -349,6 +349,7 @@ Grid grid;
 struct Particle {
     vec3 pos;
     vec4 color;
+    float anglex = 1.0f;
     Particle(vec3 p, vec4 c) : pos(p), color(c) {}
     void drawParticle(GLint modelLoc, GLint objectColorLoc) {
         // Draw each particle
@@ -403,7 +404,7 @@ int main () {
 
     
     vector<Particle> particles;
-    LoadWavefunction("orbital_n4_l2_m2.json", particles);
+    LoadWavefunction("orbital_n6_l4_m1.json", particles);
 
     // ------------------ RENDERING LOOP ------------------
     while (!glfwWindowShouldClose(engine.window)) {
@@ -415,6 +416,18 @@ int main () {
 
         // ---- 2. Draw particles -------------------
         for (Particle& p : particles) {
+
+            //float x_new = p.pos.x * cos(p.anglex) + p.pos.z * sin(p.anglex);
+            //float z_new = -p.pos.x * sin(p.anglex) + p.pos.z * cos(p.anglex);
+
+            float x_new = p.pos.x * cos(p.anglex) - p.pos.y * sin(p.anglex);
+            float y_new = p.pos.x * sin(p.anglex) + p.pos.y * cos(p.anglex);
+
+p.pos.x = x_new;
+p.pos.y = y_new;
+            // p.pos.x = x_new;
+            // p.pos.z = z_new;
+            //p.anglex += 0.01f;
             p.drawParticle(modelLoc, objectColorLoc);
         }
 

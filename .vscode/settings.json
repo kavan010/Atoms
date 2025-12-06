@@ -79,6 +79,11 @@
         "mutex": "cpp",
         "__config": "cpp",
         "fstream": "cpp",
-        "any": "cpp"
+        "any": "cpp",
+        "codecvt": "cpp",
+        "forward_list": "cpp",
+        "ranges": "cpp",
+        "valarray": "cpp",
+        "complex": "cpp"
     }
 }

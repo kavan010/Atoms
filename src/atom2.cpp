@@ -13,6 +13,7 @@
 #include <chrono>
 #include <fstream>
 #include <nlohmann/json.hpp>
+#include <complex>
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -25,7 +26,8 @@ const float eu = 2.71828182845904523536f; // Euler's number
 const float k = 8.9875517923e9f; // Coulomb's constant
 const float a0 = 52.9f; // Bohr radius in pm
 const float electron_r = 1.0f;
-const float fieldRes = 25.0f;
+const double hbar = 1.054571817e-34; // reduced Planck constant
+const double m_e   = 9.10938356e-31;  // electron mass
 
 // ================= Engine ================= //
 
@@ -41,7 +43,7 @@ struct Camera {
     // movement speeds
     float orbitSpeed = 0.01f;
     float panSpeed = 0.01f;
-    double zoomSpeed = 125.0f;
+    double zoomSpeed = 50.0f;
 
     bool dragging = false;
     bool panning = false;
@@ -348,9 +350,10 @@ Grid grid;
 
 struct Particle {
     vec3 pos;
+    vec3 vel;
     vec4 color;
-    float anglex = 1.0f;
-    Particle(vec3 p, vec4 c) : pos(p), color(c) {}
+    float anglex = 0.001f;
+    Particle(vec3 p, vec3 v, vec4 c) : pos(p), vel(v), color(c) {}
     void drawParticle(GLint modelLoc, GLint objectColorLoc) {
         // Draw each particle
         glUniform4f(objectColorLoc, 0.5f, 1.0f, 1.0f, 0.9f); // Red color for particles
@@ -391,7 +394,7 @@ void LoadWavefunction(const string& filename, vector<Particle>& particles) {
         //vec4 color = vec4(0.2f, 0.5f, 1.0f, 1.0f);
         vec4 color = vec4(1.0f, 0.0f, 1.0f, 1.0f);
 
-        particles.emplace_back(Particle(vec3(x, y, z), color));
+        particles.emplace_back(Particle(vec3(x, y, z), vec3(0.0f), color));
     }
 }
 
@@ -405,7 +408,7 @@ int main () {
     
     vector<Particle> particles;
     LoadWavefunction("orbital_n6_l4_m1.json", particles);
-
+    float dt = 10000000.1f;
     // ------------------ RENDERING LOOP ------------------
     while (!glfwWindowShouldClose(engine.window)) {
         engine.run();
@@ -416,18 +419,8 @@ int main () {
 
         // ---- 2. Draw particles -------------------
         for (Particle& p : particles) {
-
-            //float x_new = p.pos.x * cos(p.anglex) + p.pos.z * sin(p.anglex);
-            //float z_new = -p.pos.x * sin(p.anglex) + p.pos.z * cos(p.anglex);
-
-            float x_new = p.pos.x * cos(p.anglex) - p.pos.y * sin(p.anglex);
-            float y_new = p.pos.x * sin(p.anglex) + p.pos.y * cos(p.anglex);
-
-p.pos.x = x_new;
-p.pos.y = y_new;
-            // p.pos.x = x_new;
-            // p.pos.z = z_new;
-            //p.anglex += 0.01f;
+            p.vel = vec3(0.0f, 0.0f, 0.0f); // bohmianVelocity(p.pos.x, p.pos.y, p.pos.z);
+            p.pos += p.vel * dt;
             p.drawParticle(modelLoc, objectColorLoc);
         }
 

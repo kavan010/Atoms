@@ -8,364 +8,289 @@
 #include <cmath>
 #include <cstdlib>
 #include <ctime>
-#include <iomanip>
-#include <thread>
-#include <chrono>
-#include <fstream>
-#include <nlohmann/json.hpp>
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 using namespace glm;
 using namespace std;
-using json = nlohmann::json;
 
-const float c = 299792458.0f / 100000000.0f;    // speed of light in m/s
-const float eu = 2.71828182845904523536f; // Euler's number
-const float k = 8.9875517923e9f; // Coulomb's constant
-const float a0 = 52.9f; // Bohr radius in pm
+
+float c = 299792458.0f;
+float h = 6.626e-34f;   // Planck constant
+float orbitalRad = 25.0f;
+float e = 2.71828182845904523536f;
+
 
 // ================= Engine ================= //
-
-struct Camera {
-    // Center the camera orbit at (0, 0, 0) + init radius
-    vec3 target = vec3(0.0f, 0.0f, 0.0f);
-    float radius = 500.0f;
-
-    // Camera angles
-    float azimuth = 0.0f;
-    float elevation = M_PI / 2.0f;
-
-    // movement speeds
-    float orbitSpeed = 0.01f;
-    float panSpeed = 0.01f;
-    double zoomSpeed = 125.0f;
-
-    bool dragging = false;
-    bool panning = false;
-    bool moving = false; // For compute shader optimization
-    double lastX = 0.0, lastY = 0.0;
-
-    // Calculate camera position in world space
-    vec3 position() const {
-        float clampedElevation = glm::clamp(elevation, 0.01f, float(M_PI) - 0.01f);
-        // Orbit around (0,0,0) always
-        return vec3(
-            radius * sin(clampedElevation) * cos(azimuth),
-            radius * cos(clampedElevation),
-            radius * sin(clampedElevation) * sin(azimuth)
-        );
-    }
-    void update() {
-        // Always keep target at black hole center
-        target = vec3(0.0f, 0.0f, 0.0f);
-        if(dragging | panning) {
-            moving = true;
-        } else {
-            moving = false;
-        }
-    }
-
-    void processMouseMove(double x, double y) {
-        float dx = float(x - lastX);
-        float dy = float(y - lastY);
-
-        if (dragging && panning) {
-            // Pan: Shift + Left or Middle Mouse
-            // Disable panning to keep camera centered on black hole
-        }
-        else if (dragging && !panning) {
-            // Orbit: Left mouse only
-            azimuth   += dx * orbitSpeed;
-            elevation -= dy * orbitSpeed;
-            elevation = glm::clamp(elevation, 0.01f, float(M_PI) - 0.01f);
-        }
-
-        lastX = x;
-        lastY = y;
-        update();
-    }
-    void processMouseButton(int button, int action, int mods, GLFWwindow* win) {
-        if (button == GLFW_MOUSE_BUTTON_LEFT || button == GLFW_MOUSE_BUTTON_MIDDLE) {
-            if (action == GLFW_PRESS) {
-                dragging = true;
-                // Disable panning so camera always orbits center
-                panning = false;
-                glfwGetCursorPos(win, &lastX, &lastY);
-            } else if (action == GLFW_RELEASE) {
-                dragging = false;
-                panning = false;
-            }
-        }
-    }
-    void processScroll(double xoffset, double yoffset) {
-        radius -= yoffset * zoomSpeed;
-        update();
-    };
-};
-Camera camera;
-
 struct Engine {
+   GLFWwindow* window;
+   int WIDTH = 800;
+   int HEIGHT = 600;
 
-    // opengl vars
-     GLFWwindow* window;
-     GLuint shaderProgram;
+   Engine () {
 
-    // vars - scale
-    int WIDTH = 800;  // Window width
-    int HEIGHT = 600; // Window height
-    float width = 1000.0f; // Width of the viewport in picometers 
-    float height = 750.0f; // Height of the viewport in picometers 
-    
+       // --- init GLFW ---
+       if(!glfwInit()) {
+           cerr << "failed to init glfw, PANIC!";
+           exit(EXIT_FAILURE);
+       };
 
-    Engine () {
-        // init glfw
-        if (!glfwInit()) {
-            cerr << "GLFW init failed\n";
-            exit(EXIT_FAILURE);
-        }
+       // --- create window ---
+       window = glfwCreateWindow(WIDTH, HEIGHT, "Atom Sim", nullptr, nullptr);
+       if(!window) {
+           cerr << "failed to create window, PANIC!";
+           glfwTerminate();
+           exit(EXIT_FAILURE);
+       }
+       glfwMakeContextCurrent(window);
+       int fbWidth, fbHeight;
+       glfwGetFramebufferSize(window, &fbWidth, &fbHeight);
+       glViewport(0, 0, fbWidth, fbHeight);
 
-        // create window
-        window = glfwCreateWindow(WIDTH, HEIGHT, "Quantum Simulation by kavan G", nullptr, nullptr);
-        if (!window) {
-            cerr << "Failed to create GLFW window\n";
-            glfwTerminate();
-            exit(EXIT_FAILURE);
-        }
-        glViewport(0, 0, WIDTH, HEIGHT);
-        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-        glfwMakeContextCurrent(window);
-        glEnable(GL_DEPTH_TEST);
 
-        // Enable alpha blending for transparent objects
-        glEnable(GL_BLEND);
-        //glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+   };
+   void run() {
+       glClear(GL_COLOR_BUFFER_BIT);
+       glMatrixMode(GL_PROJECTION);
+       glLoadIdentity();
 
-        // init glew
-        glewExperimental = GL_TRUE;
-        GLenum glewErr = glewInit();
-        if (glewErr != GLEW_OK) {
-            cerr << "Failed to initialize GLEW: "
-                << (const char*)glewGetErrorString(glewErr)
-                << "\n";
-            glfwTerminate();
-            exit(EXIT_FAILURE);
-        }
-        // Create shader program
-        this->shaderProgram = CreateShaderProgram();
-    }
 
-    void run() {
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        glUseProgram(shaderProgram);
+       // Set origin (0,0) to center
+       double halfWidth  = WIDTH / 2.0;
+       double halfHeight = HEIGHT / 2.0;
 
-        mat4 view = lookAt(camera.position(), camera.target, vec3(0,1,0));
-        mat4 projection = perspective(radians(45.0f), float(WIDTH)/HEIGHT, 0.1f, 10000.0f); // clipping distance
 
-        glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "view"), 1, GL_FALSE, value_ptr(view));
-        glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "projection"), 1, GL_FALSE, value_ptr(projection));
+       glOrtho(-halfWidth, halfWidth, -halfHeight, halfHeight, -1.0, 1.0);
 
-    };
-    GLuint CreateShaderProgram(){
-        const char* vertexShaderSource = R"(
-        #version 330 core
-        layout (location = 0) in vec3 aPos;
 
-        uniform mat4 model;
-        uniform mat4 view;
-        uniform mat4 projection;
-        uniform vec4 objectColor;
+       glMatrixMode(GL_MODELVIEW);
+       glLoadIdentity();
+   }
+  
+   // ----- Drawing Functions -----
+   void drawCircle(float x, float y, float r, int segments = 100) {
+       glLineWidth(0.4f);
+       glColor3f(0.4f, 0.4f, 0.4f);
+       glBegin(GL_LINE_LOOP);
+       for (int i = 0; i < segments+1; i++) {
+           float angle = 2.0f * M_PI * i / segments;
+           float dx = r * cosf(angle);
+           float dy = r * sinf(angle);
+           glVertex2f(x + dx, y + dy);
+       }
+       glEnd();
+   }
+   void drawFilledCircle(float x, float y, float r, int segments = 50) {
+       glBegin(GL_TRIANGLE_FAN);
+       glVertex2f(x, y); // center
+       for (int i = 0; i <= segments; i++) {
+           float angle = 2.0f * M_PI * i / segments;
+           float dx = r * cosf(angle);
+           float dy = r * sinf(angle);
+           glVertex2f(x + dx, y + dy);
+       }
+       glEnd();
+   }
+   float timeDT(float* lastTime) {
+       float currentTime = glfwGetTime();
+       float dt = currentTime - *lastTime;
+       *lastTime = currentTime;
+       return dt;
+   }
 
-        out vec4 FragColorVS;
 
-        void main() {
-            gl_Position = projection * view * model * vec4(aPos, 1.0);
-            FragColorVS = objectColor;
-        })";
-
-        const char* fragmentShaderSource = R"(
-            #version 330 core
-            in vec4 FragColorVS;
-            out vec4 FragColor;
-
-            void main() {
-                FragColor = FragColorVS;
-            }
-        )";
-
-        // vertex shader
-        GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
-        glShaderSource(vertexShader, 1, &vertexShaderSource, nullptr);
-        glCompileShader(vertexShader);
-
-        // fragment shader
-        GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-        glShaderSource(fragmentShader, 1, &fragmentShaderSource, nullptr);
-        glCompileShader(fragmentShader);
-
-        GLuint shaderProgram = glCreateProgram();
-        glAttachShader(shaderProgram, vertexShader);
-        glAttachShader(shaderProgram, fragmentShader);
-        glLinkProgram(shaderProgram);
-
-        glDeleteShader(vertexShader);
-        glDeleteShader(fragmentShader);
-
-        return shaderProgram;
-    };
-    void CreateVBOVAO(GLuint& VAO, GLuint& VBO, const float* vertices, size_t vertexCount) {
-        glGenVertexArrays(1, &VAO);
-        glGenBuffers(1, &VBO);
-
-        glBindVertexArray(VAO);
-        glBindBuffer(GL_ARRAY_BUFFER, VBO);
-        glBufferData(GL_ARRAY_BUFFER, vertexCount * sizeof(float), vertices, GL_STATIC_DRAW);
-
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-        glEnableVertexAttribArray(0);
-        glBindVertexArray(0);
-    }
-    vec3 sphericalToCartesian(float r, float theta, float phi){
-        float x = r * sin(theta) * cos(phi);
-        float y = r * cos(theta);
-        float z = r * sin(theta) * sin(phi);
-        return vec3(x, y, z);
-    };
-    void SwitchTo2DRendering () {
-        // --- SWITCH TO 2D ORTHO FOR DENSITY ---
-        glm::mat4 ortho = glm::ortho(0.0f, float(WIDTH), 0.0f, float(HEIGHT));
-        GLuint projLoc = glGetUniformLocation(shaderProgram, "projection");
-        glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(ortho));
-
-        glm::mat4 view2D = glm::mat4(1.0f);
-        GLuint viewLoc = glGetUniformLocation(shaderProgram, "view");
-        glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view2D));
-    }
 };
 Engine engine;
 
-void setupCameraCallbacks(GLFWwindow* window) {
-    glfwSetWindowUserPointer(window, &camera);
-
-    glfwSetMouseButtonCallback(window, [](GLFWwindow* win, int button, int action, int mods) {
-        Camera* cam = (Camera*)glfwGetWindowUserPointer(win);
-        cam->processMouseButton(button, action, mods, win);
-    });
-
-    glfwSetCursorPosCallback(window, [](GLFWwindow* win, double x, double y) {
-        Camera* cam = (Camera*)glfwGetWindowUserPointer(win);
-        cam->processMouseMove(x, y);
-    });
-
-    glfwSetScrollCallback(window, [](GLFWwindow* win, double xoffset, double yoffset) {
-        Camera* cam = (Camera*)glfwGetWindowUserPointer(win);
-        cam->processScroll(xoffset, yoffset);
-    });
+float random(float min, float max, float step) {
+   int numSteps = static_cast<int>((max - min) / step + 0.5f);
+   int r = std::rand() % (numSteps + 1); // random step index
+   return min + r * step;
 }
+// ================= Particles ================= //
 
-// ================= Objects ================= //
-struct Grid {
-    GLuint gridVAO, gridVBO;
-    vector<float> vertices;
-    Grid() {
-        vertices = CreateGridVertices(500.0f, 2);
-        engine.CreateVBOVAO(gridVAO, gridVBO, vertices.data(), vertices.size());
-    }
-    void Draw (GLint objectColorLoc) {
-        glUseProgram(engine.shaderProgram);
-        glUniform4f(objectColorLoc, 1.0f, 1.0f, 1.0f, 0.05f);
-        glBindBuffer(GL_ARRAY_BUFFER, gridVBO);
-        glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_DYNAMIC_DRAW);
-        DrawGrid(engine.shaderProgram, gridVAO, vertices.size());
-    }
-    void DrawGrid(GLuint shaderProgram, GLuint gridVAO, size_t vertexCount) {
-        glUseProgram(shaderProgram);
-        glm::mat4 model = glm::mat4(1.0f); // Identity matrix for the grid
-        GLint modelLoc = glGetUniformLocation(shaderProgram, "model");
-        glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
 
-        glBindVertexArray(gridVAO);
-        glPointSize(2.0f);
-        glDrawArrays(GL_LINES, 0, vertexCount / 3);
-        glBindVertexArray(0);
-    }
-    vector<float> CreateGridVertices(float size, int divisions) {
-        
-        std::vector<float> vertices;
-        float step = size / divisions;
-        float halfSize = size / 2.0f;
+struct WavePoint { vec2 localPos; vec2 dir;  };
+struct Wave {
+   float energy;
+   float sigma = 40.0f, k = 0.4f, phase = 0.0f, a = 10.0f, angleR;
+   vector<WavePoint> points;
 
-        // amount to extend the central X-axis line (in same units as size)
-        float extra = step * 3.0f; // adjust this factor to make the line stick out more/less
-        int midZ = divisions / 2;
 
-        // x axis
-        for (int yStep = 3; yStep <= 3; ++yStep) {
-            float y = 0;
-            for (int zStep = 0; zStep <= divisions; ++zStep) {
-                float z = -halfSize + zStep * step;
-                for (int xStep = 0; xStep < divisions; ++xStep) {
-                    float xStart = -halfSize + xStep * step;
-                    float xEnd = xStart + step;
+   vec2 pos, dir;
 
-                    // If this is the central line (middle z), extend the very first and last segment
-                    if (zStep == midZ) {
-                        if (xStep == 0) {
-                            xStart -= extra; // extend left end
-                        }
-                        if (xStep == divisions - 1) {
-                            xEnd += extra;   // extend right end
-                        }
-                    }
 
-                    vertices.push_back(xStart); vertices.push_back(y); vertices.push_back(z);
-                    vertices.push_back(xEnd);   vertices.push_back(y); vertices.push_back(z);
-                }
-            }
+   Wave(float e, vec2 pos, vec2 dir) : energy(e), pos(pos), dir(dir) {
+       dir = normalize(dir);
+       for (float x = -sigma; x <= sigma; x += 0.1f) {
+           points.push_back({ pos + x*dir, dir * 200.0f});
+       }
+       angleR = atan2(dir.y, dir.x);
+   }
+  
+   void Draw() {
+    
+        if (energy == 4.2f) glColor3f(1.0f, 1.0f, 0.0f);
+        else glColor3f(0.0f, 1.0f, 1.0f);
+        glBegin(GL_LINE_STRIP);
+        for (WavePoint& p : points) {
+            // Perpendicular vector for sine displacement
+            vec2 perp(-p.dir.y, p.dir.x);
+            perp = normalize(perp);
+
+
+        // Use global phase, not x, for sine
+        float y_disp = a * sin(k * length(p.localPos) - phase);
+
+
+            vec2 drawPos = p.localPos + perp * y_disp;
+            glVertex2f(drawPos.x, drawPos.y);
         }
-        // zaxis
-        for (int xStep = 0; xStep <= divisions; ++xStep) {
-            float x = -halfSize + xStep * step;
-            for (int yStep = 3; yStep <= 3; ++yStep) {
-                float y = 0;
-                for (int zStep = 0; zStep < divisions; ++zStep) {
-                    float zStart = -halfSize + zStep * step;
-                    float zEnd = zStart + step;
-                    vertices.push_back(x); vertices.push_back(y); vertices.push_back(zStart);
-                    vertices.push_back(x); vertices.push_back(y); vertices.push_back(zEnd);
-                }
-            }
-        }
-
-        return vertices;
-
+        glEnd();
     }
+   void update(float dt) {
+       phase += 30.0f * dt; // continuous phase
+
+
+       for (WavePoint& p : points) {
+           // move along velocity
+           p.localPos += p.dir * dt;
+
+
+           // bounce off walls
+           if (p.localPos.x < -400) { p.localPos.x = -400; p.dir.x *= -1; }
+           if (p.localPos.x > 400)  { p.localPos.x = 400;  p.dir.x *= -1; }
+           if (p.localPos.y < -300) { p.localPos.y = -300; p.dir.y *= -1; }
+           if (p.localPos.y > 300)  { p.localPos.y = 300;  p.dir.y *= -1; }
+       }
+   }
 };
-Grid grid;
 
+
+struct Particle {
+   int x, y, charge;
+   float theta;
+
+   int n = 1;                      // quantum level
+   int targetN = 1;                // excited state target
+   bool excited = false;
+   float exciteTimer = 0.0f;       // time spent excited
+   float exciteLifetime = 0.0f;    // random lifetime
+
+   Particle (int x, int y, int c) : x(x), y(y), charge(c) { theta = atan2f(y, x); }
+
+   void Draw() {
+       glColor4f(1.0f, 1.0f, 1.0f, 0.35f);
+       engine.drawCircle(0.0f, 0.0f, length(vec2((float) x, (float) y)), 100);
+
+       if (charge == 1){
+           glColor3f(1.0f, 0.0f, 0.0f);
+           engine.drawFilledCircle(x, y, 10);
+       }
+       if (charge == 0) {
+           glColor3f(0.5f, 0.5f, 0.5f);
+           engine.drawFilledCircle(x, y, 10);
+       }
+       if (charge == -1) {
+           glColor3f(0.0f, 1.0f, 1.0f);
+           engine.drawFilledCircle(x, y, 2);
+       }
+   }
+   void electronUpdate(float speed, vector<Wave>& waves) {
+       theta += speed;
+       x = (orbitalRad * (n*n)) * cosf(theta);
+       y = (orbitalRad * (n*n)) * sinf(theta);
+       if (n!= 1 && exciteTimer <=0.0f) {
+           n-=1;
+           exciteTimer = 0.003f;
+           float waveDirX = (rand() % 2 == 0) ? -1 : 1;
+           float waveDirY = (rand() % 2 == 0) ? -1 : 1;
+           waves.emplace_back(4.2f, vec2((float)x, (float)y), vec2(waveDirX, waveDirY));
+       }
+   }
+   void checkAbsorbtion(Wave& wave) {
+       for (WavePoint& wp : wave.points) {
+            float dist = length(vec2((float)x, (float)y) - wp.localPos);
+            if (dist < 20.0f && wave.energy == 3.2f) {
+                wave.energy = 0.0f;
+                n += 1;
+                exciteTimer += 0.003f;
+                exciteLifetime = random(1.0f, 3.0f, 0.1f);
+                break;
+            }
+        }
+
+   }
+};
+// ================= Declare Atom Objects ================= //
+vector<Particle> particles = {
+   Particle(0, 0, 1),
+   Particle(50, 50, -1),
+};
+
+
+vector<Wave> waves = { };
 // ================= Main ================= //
 int main () {
-    setupCameraCallbacks(engine.window);
-    GLint modelLoc = glGetUniformLocation(engine.shaderProgram, "model");
-    GLint objectColorLoc = glGetUniformLocation(engine.shaderProgram, "objectColor");
-    glUseProgram(engine.shaderProgram);
-
-    
-    // ------------------ RENDERING LOOP ------------------
-    while (!glfwWindowShouldClose(engine.window)) {
-        engine.run();
-
-        // ---- DRAW GRID ----
-        grid.Draw(objectColorLoc);
+   srand(static_cast<unsigned int>(std::time(nullptr)));
 
 
+   for (int i = 0; i < 25; i++) {
+       float x = static_cast <float> (rand()) / (static_cast <float> (RAND_MAX/800.0f)) - 400.0f;
+       float y = static_cast <float> (rand()) / (static_cast <float> (RAND_MAX/600.0f)) - 300.0f;
+       waves.emplace_back(3.2f, vec2(x, y), vec2(y, x));
+   }
+  
+   float lastTime = glfwGetTime(); float dt;
+   while (!glfwWindowShouldClose(engine.window)) {
 
-        glfwSwapBuffers(engine.window);
-        glfwPollEvents();
-    }
-    
-    glfwDestroyWindow(engine.window);
-    glfwTerminate();
-    return 0;
+       // --- Time Calculation ---
+       dt = engine.timeDT(&lastTime);
+
+       engine.run();
+
+       // ---- Draw Particles ----
+       for (Particle& p : particles) {
+           if (p.exciteTimer > 0) p.exciteTimer -= dt/100;
+
+           p.Draw();
+           if (p.charge == -1){
+               p.electronUpdate(5.0f * dt, waves);
+               cout<< "Electron n: " << p.n << " Timer: " << p.exciteTimer << endl;
+           }
+           for (Wave& w : waves) {
+               p.checkAbsorbtion(w);
+           }
+          
+       }
+
+       // --- Draw Waves ---
+       for (Wave& w : waves) {
+           if (w.energy <= 0.0f) continue;
+           w.Draw();
+           w.update(dt);
+       }
+
+       glfwSwapBuffers(engine.window);
+       glfwPollEvents();
+   }
+
+
+   return 0;
 }
+
+
+
+
+// float useX = fmodf(p.localPos.x, 10.0f);
+// useX -= 5.0f;
+
+
+// float envelope = expf(-(useX * useX) / (2.0f * sigma * sigma));
+// float carrier  = a * sinf(k * useX - phase);
+// p.localPos.y = envelope * carrier;
+
+
+
+
+

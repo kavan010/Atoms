@@ -43,7 +43,7 @@ struct Camera {
     // movement speeds
     float orbitSpeed = 0.01f;
     float panSpeed = 0.01f;
-    double zoomSpeed = 50.0f;
+    double zoomSpeed = 20.0f;
 
     bool dragging = false;
     bool panning = false;
@@ -407,7 +407,7 @@ int main () {
 
     
     vector<Particle> particles;
-    LoadWavefunction("orbital_n6_l4_m1.json", particles);
+    LoadWavefunction("orbital_n7_l4_m0.json", particles);
     float dt = 10000000.1f;
     // ------------------ RENDERING LOOP ------------------
     while (!glfwWindowShouldClose(engine.window)) {

@@ -5,7 +5,7 @@
             "name": "g++ Debug",
             "type": "cppdbg",
             "request": "launch",
-            // "program": "${workspaceFolder}/bin/atom.exe",
+            //"program": "${workspaceFolder}/bin/atom.exe",
             "program": "${workspaceFolder}/bin/atom2.exe",           // here
             "args": [],
             "stopAtEntry": false,

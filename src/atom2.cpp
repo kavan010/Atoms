@@ -22,10 +22,11 @@ using namespace std;
 
 // ================= Constants ================= //
 const float c = 299792458.0f / 100000000.0f;    // speed of light in m/s
-const float a0 = 52.9f; // Bohr radius in pm
+const float a0 = 1;               //52.9f; // Bohr radius in pm
 const float electron_r = 1.0f;
-const double hbar = 1.054571817e-34; // reduced Planck constant
-const double m_e   = 9.10938356e-31;  // electron mass
+const double hbar  = 1;           //1.054571817e-34; // reduced Planck constant
+const double m_e   = 1;           //9.10938356e-31;  // electron mass
+const double zmSpeed   = 10.0;
 
 // ================= Engine ================= //
 struct Camera {
@@ -40,7 +41,7 @@ struct Camera {
     // movement speeds
     float orbitSpeed = 0.01f;
     float panSpeed = 0.01f;
-    double zoomSpeed = 20.0f;
+    double zoomSpeed = zmSpeed;
 
     bool dragging = false;
     bool panning = false;
@@ -263,107 +264,6 @@ void setupCameraCallbacks(GLFWwindow* window) {
     });
 }
 
-// ================= Physics ================= //
-struct Physics {
-    // Factorial helper
-    double factorial(int n) {
-        if (n <= 1) return 1.0;
-        double res = 1.0;
-        for (int i = 2; i <= n; ++i) res *= i;
-        return res;
-    }
-    // Associated Laguerre Polynomial L_n^alpha(x)
-    double laguerre(int n, int alpha, double x) {
-        if (n == 0) return 1.0;
-        if (n == 1) return 1.0 + alpha - x;
-        
-        double L_k_minus_1 = 1.0 + alpha - x;
-        double L_k_minus_2 = 1.0;
-        double L_k = 0.0;
-
-        for (int k = 1; k < n; ++k) {
-            L_k = ((2 * k + 1 + alpha - x) * L_k_minus_1 - (k + alpha) * L_k_minus_2) / (k + 1);
-            L_k_minus_2 = L_k_minus_1;
-            L_k_minus_1 = L_k;
-        }
-        return L_k;
-    }
-    // Associated Legendre Polynomial P_l^m(x)
-    double legendre(int l, int m, double x) {
-        // Condon-Shortley phase is often included in Spherical Harmonics, 
-        // but for probability density |Y|^2 it doesn't matter.
-        // Here we use a standard recurrence.
-        
-        double pmm = 1.0;
-        if (m > 0) {
-            double somx2 = sqrt((1.0 - x) * (1.0 + x));
-            double fact = 1.0;
-            for (int i = 1; i <= m; ++i) {
-                pmm *= -fact * somx2;
-                fact += 2.0;
-            }
-        }
-        if (l == m) return pmm;
-
-        double pmmp1 = x * (2 * m + 1) * pmm;
-        if (l == m + 1) return pmmp1;
-
-        double pll = 0.0;
-        for (int ll = m + 2; ll <= l; ++ll) {
-            pll = (x * (2 * ll - 1) * pmmp1 - (ll + m - 1) * pmm) / (ll - m);
-            pmm = pmmp1;
-            pmmp1 = pll;
-        }
-        return pll;
-    }
-    // Hydrogen Radial Function R_nl(r)
-    double radial_R(int n, int l, double r) {
-        double rho = 2.0 * r / (n * a0);
-        double prefactor = sqrt(pow(2.0 / (n * a0), 3) * factorial(n - l - 1) / (2.0 * n * factorial(n + l)));
-        return prefactor * exp(-rho / 2.0) * pow(rho, l) * laguerre(n - l - 1, 2 * l + 1, rho);
-    }
-    // Probability Density Function |Psi|^2
-    double probability_density(int n, int l, int m, const vec3& pos) {
-        double r = length(pos);
-        if (r < 1e-6) return 0.0;
-
-        // Convert Cartesian to Spherical
-        double theta = acos(pos.z / r); // Elevation [0, PI]
-        // phi is not needed for magnitude of stationary states as |e^im*phi| = 1
-        
-        double R = radial_R(n, l, r);
-        
-        // Normalization for Spherical Harmonics (part of it)
-        double Y_norm = sqrt(((2 * l + 1) * factorial(l - abs(m))) / (4 * M_PI * factorial(l + abs(m))));
-        double P = legendre(l, abs(m), cos(theta));
-        
-        double psi_mag = R * Y_norm * P;
-        return psi_mag * psi_mag;
-    }
-    // Bohmian Velocity Calculation
-    vec3 getBohmianVelocity(int n, int l, int m, const vec3& pos) {
-        // For a single eigenstate psi_{nlm}, the flow is purely azimuthal.
-        // v = (hbar / m_e) * (m / (r * sin(theta))) in phi_hat direction
-        
-        double r = length(pos);
-        if (r < 1e-4) return vec3(0.0);
-
-        // r_xy is r * sin(theta) (distance from Z axis)
-        double r_xy = sqrt(pos.x * pos.x + pos.y * pos.y); 
-        if (r_xy < 1e-4) return vec3(0.0); // Singularity at poles
-
-        // Velocity magnitude
-        // We scale this down significantly for visual stability
-        double speed = (m) / r_xy; // Simplified unit-less speed relative to shape
-        
-        // Phi unit vector: (-y, x, 0) / r_xy
-        vec3 phi_hat = vec3(-pos.y / r_xy, pos.x / r_xy, 0.0f);
-
-        return phi_hat * (float)speed;
-    }
-};
-Physics phy;
-
 // ================= Objects ================= //
 struct Grid {
     GLuint gridVAO, gridVBO;
@@ -446,6 +346,7 @@ Grid grid;
 
 struct Particle {
     vec3 pos;
+    float theta, phi;
     vec3 vel = vec3(0.0f);
     vec4 color = vec4(0.5f, 1.0f, 1.0f, 0.9f);
     Particle(vec3 p) : pos(p){}
@@ -466,53 +367,140 @@ struct Particle {
 };
 
 vector<Particle> particles;
-vector<Particle> GenerateParticles(int n, int l, int m, int count) {
-    vector<Particle> particles;
-    particles.reserve(count);
+random_device rd; mt19937 gen(rd()); uniform_real_distribution<float> dis(0.0f, 1.0f);
 
-    // Initial random walker position
-    vec3 walker = vec3(n*a0 + 1.0, 0, 0); 
-    double currentProb = phy.probability_density(n, l, m, walker);
+double sampleR(int n, int l, mt19937& gen) {
+    const int N = 4096;
+    //const double a0 = 1.0;
+    const double rMax = 10.0 * n * n * a0;
 
-    default_random_engine generator(time(0));
-    normal_distribution<double> stepDist(0.0, 1.5); // Step size for walker
-    uniform_real_distribution<double> acceptDist(0.0, 1.0);
+    static vector<double> cdf;
+    static bool built = false;
 
-    // Warmup (burn-in) to find the cloud
-    for(int i=0; i<5000; i++) {
-        vec3 proposal = walker + vec3(stepDist(generator), stepDist(generator), stepDist(generator));
-        double nextProb = phy.probability_density(n, l, m, proposal);
-        if (nextProb > 0 && acceptDist(generator) < (nextProb / currentProb)) {
-            walker = proposal;
-            currentProb = nextProb;
-        }
-    }
+    if (!built) {
+        cdf.resize(N);
+        double dr = rMax / (N - 1);
+        double sum = 0.0;
 
-    // Actual Sampling
-    int accepted = 0;
-    while(accepted < count) {
-        // Decorrelation steps (move walker a few times between samples to avoid clumping)
-        for(int k=0; k<10; k++) {
-            vec3 proposal = walker + vec3(stepDist(generator), stepDist(generator), stepDist(generator));
-            double nextProb = phy.probability_density(n, l, m, proposal);
-            // Metropolis acceptance criterion
-            if (nextProb >= currentProb || acceptDist(generator) < (nextProb / currentProb)) {
-                walker = proposal;
-                currentProb = nextProb;
+        for (int i = 0; i < N; ++i) {
+            double r = i * dr;
+            double rho = 2.0 * r / (n * a0);
+
+            // Associated Laguerre L_{n-l-1}^{2l+1}(rho)
+            int k = n - l - 1;
+            int alpha = 2 * l + 1;
+
+            double L = 1.0, Lm1 = 1.0 + alpha - rho;
+            if (k == 1) L = Lm1;
+            else if (k > 1) {
+                double Lm2 = 1.0;
+                for (int j = 2; j <= k; ++j) {
+                    L = ((2*j - 1 + alpha - rho) * Lm1 -
+                         (j - 1 + alpha) * Lm2) / j;
+                    Lm2 = Lm1;
+                    Lm1 = L;
+                }
             }
-        }
-        
-        // Color based on phase (simplified for real/im split or just depth)
-        float r_dist = length(walker);
-        float brightness = 0.2f + 0.8f * (1.0f - exp(-r_dist/10.0f));
-        vec4 col = vec4(0.2f, 0.6f, 1.0f, 0.6f); 
 
-        particles.push_back(Particle(walker));
-        accepted++;
-        
-        if (accepted % 1000 == 0) cout << "Sampled " << accepted << " particles..." << endl;
+            double norm = pow(2.0 / (n * a0), 3) * tgamma(n - l) / (2.0 * n * tgamma(n + l + 1));
+            double R = sqrt(norm) * exp(-rho / 2.0) * pow(rho, l) * L;
+
+            double pdf = r * r * R * R;
+            sum += pdf;
+            cdf[i] = sum;
+        }
+
+        for (double& v : cdf) v /= sum;
+        built = true;
     }
-    return particles;
+
+    uniform_real_distribution<double> dis(0.0, 1.0);
+    double u = dis(gen);
+
+    int idx = lower_bound(cdf.begin(), cdf.end(), u) - cdf.begin();
+    return idx * (rMax / (N - 1));
+}
+
+double sampleTheta(int l, int m, mt19937& gen) {
+    const int N = 2048;
+    static vector<double> cdf;
+    static bool built = false;
+
+    if (!built) {
+        cdf.resize(N);
+        double dtheta = M_PI / (N - 1);
+        double sum = 0.0;
+
+        for (int i = 0; i < N; ++i) {
+            double theta = i * dtheta;
+            double x = cos(theta);
+
+            // Associated Legendre P_l^m(x)
+            double Pmm = 1.0;
+            if (m > 0) {
+                double somx2 = sqrt((1.0 - x) * (1.0 + x));
+                double fact = 1.0;
+                for (int j = 1; j <= m; ++j) {
+                    Pmm *= -fact * somx2;
+                    fact += 2.0;
+                }
+            }
+
+            double Plm;
+            if (l == m) {
+                Plm = Pmm;
+            } else {
+                double Pm1m = x * (2 * m + 1) * Pmm;
+                if (l == m + 1) {
+                    Plm = Pm1m;
+                } else {
+                    double Pll;
+                    for (int ll = m + 2; ll <= l; ++ll) {
+                        Pll = ((2 * ll - 1) * x * Pm1m -
+                               (ll + m - 1) * Pmm) / (ll - m);
+                        Pmm = Pm1m;
+                        Pm1m = Pll;
+                    }
+                    Plm = Pm1m;
+                }
+            }
+
+            double pdf = sin(theta) * Plm * Plm;
+            sum += pdf;
+            cdf[i] = sum;
+        }
+
+        for (double& v : cdf) v /= sum;
+        built = true;
+    }
+
+    uniform_real_distribution<double> dis(0.0, 1.0);
+    double u = dis(gen);
+
+    int idx = lower_bound(cdf.begin(), cdf.end(), u) - cdf.begin();
+    return idx * (M_PI / (N - 1));
+}
+
+float samplePhi(float n, float l, float m) {
+    return 2.0f * M_PI * dis(gen);
+}
+
+vec3 calculateProbabilityFlow(Particle& p, int n, int l, int m) {
+    double r = length(p.pos);   if (r < 1e-6) return vec3(0.0f);
+    double theta = acos(p.pos.y / r); 
+    double phi = atan2(p.pos.z, p.pos.x); 
+
+
+    //Compute magnitude
+    double sinTheta = sin(theta);  if (abs(sinTheta) < 1e-4) sinTheta = 1e-4;
+    double v_mag = hbar * m / (m_e * r * sinTheta);
+
+    //Convert to Cartesian
+    double vx = -v_mag * sin(phi);
+    double vy = 0.0; 
+    double vz =  v_mag * cos(phi);
+
+    return vec3((float)vx, (float)vy, (float)vz);
 }
 
 // ================= Main ================= //
@@ -522,27 +510,41 @@ int main () {
     GLint objectColorLoc = glGetUniformLocation(engine.shaderProgram, "objectColor");
     glUseProgram(engine.shaderProgram);
 
-    float n = 6; float l = 4; float m = 1;
+    float n = 5; float l = 4; float m = -1;
 
     // ------- CREATE PARTICLES -------
-    particles = GenerateParticles(n, l, m, 10000);
+    for (int i = 0; i < 10000; ++i) {
+
+        float r = sampleR(n, l, gen);
+        float theta = sampleTheta(l, m, gen);
+        float phi = samplePhi(n, l, m);
+
+        vec3 pos = engine.sphericalToCartesian(r, theta, phi);
+        particles.emplace_back(pos);
+    }
 
     // ------------------ RENDERING LOOP ------------------
-    float dt = 0.1f;
+    float dt = 10.1f;
     while (!glfwWindowShouldClose(engine.window)) {
         engine.run();
         grid.Draw(objectColorLoc);
 
         for (Particle& p : particles) {
 
-            // Standard RK4
-            vec3 k1 = phy.getBohmianVelocity(n, l, m, p.pos);
-            vec3 k2 = phy.getBohmianVelocity(n, l, m, p.pos + k1 * (dt * 0.5f));
-            vec3 k3 = phy.getBohmianVelocity(n, l, m, p.pos + k2 * (dt * 0.5f));
-            vec3 k4 = phy.getBohmianVelocity(n, l, m, p.pos + k3 * dt);
+            // For a stationary state, Bohmian trajectories have constant r and theta.
+            // We store the original r and theta before the update.
+            double r = length(p.pos);
+            if (r < 1e-6) { // Skip particles at the origin.
+                p.drawParticle(modelLoc, objectColorLoc);
+                continue;
+            }
+            double theta = acos(p.pos.y / r);
+            p.vel = calculateProbabilityFlow(p, n, l, m);
+            vec3 temp_pos = p.pos + p.vel * dt;
+            double new_phi = atan2(temp_pos.z, temp_pos.x);
+            p.pos = engine.sphericalToCartesian(r, theta, new_phi);
 
-            p.pos += (k1 + 2.0f*k2 + 2.0f*k3 + k4) * (dt / 6.0f) ;
-
+            //cout << fixed << setprecision(2) << "Particle Vel: (" << p.vel.x << ", " << p.vel.y << ", " << p.vel.z << ")\n";
             p.drawParticle(modelLoc, objectColorLoc);
         }
 

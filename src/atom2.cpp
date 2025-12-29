@@ -12,25 +12,22 @@
 #include <thread>
 #include <chrono>
 #include <fstream>
-#include <nlohmann/json.hpp>
 #include <complex>
+#include <random>
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 using namespace glm;
 using namespace std;
-using json = nlohmann::json;
 
+// ================= Constants ================= //
 const float c = 299792458.0f / 100000000.0f;    // speed of light in m/s
-const float eu = 2.71828182845904523536f; // Euler's number
-const float k = 8.9875517923e9f; // Coulomb's constant
 const float a0 = 52.9f; // Bohr radius in pm
 const float electron_r = 1.0f;
 const double hbar = 1.054571817e-34; // reduced Planck constant
 const double m_e   = 9.10938356e-31;  // electron mass
 
 // ================= Engine ================= //
-
 struct Camera {
     // Center the camera orbit at (0, 0, 0) + init radius
     vec3 target = vec3(0.0f, 0.0f, 0.0f);
@@ -108,7 +105,6 @@ struct Camera {
     };
 };
 Camera camera;
-
 struct Engine {
 
     // opengl vars
@@ -248,7 +244,6 @@ struct Engine {
     }
 };
 Engine engine;
-
 void setupCameraCallbacks(GLFWwindow* window) {
     glfwSetWindowUserPointer(window, &camera);
 
@@ -267,6 +262,107 @@ void setupCameraCallbacks(GLFWwindow* window) {
         cam->processScroll(xoffset, yoffset);
     });
 }
+
+// ================= Physics ================= //
+struct Physics {
+    // Factorial helper
+    double factorial(int n) {
+        if (n <= 1) return 1.0;
+        double res = 1.0;
+        for (int i = 2; i <= n; ++i) res *= i;
+        return res;
+    }
+    // Associated Laguerre Polynomial L_n^alpha(x)
+    double laguerre(int n, int alpha, double x) {
+        if (n == 0) return 1.0;
+        if (n == 1) return 1.0 + alpha - x;
+        
+        double L_k_minus_1 = 1.0 + alpha - x;
+        double L_k_minus_2 = 1.0;
+        double L_k = 0.0;
+
+        for (int k = 1; k < n; ++k) {
+            L_k = ((2 * k + 1 + alpha - x) * L_k_minus_1 - (k + alpha) * L_k_minus_2) / (k + 1);
+            L_k_minus_2 = L_k_minus_1;
+            L_k_minus_1 = L_k;
+        }
+        return L_k;
+    }
+    // Associated Legendre Polynomial P_l^m(x)
+    double legendre(int l, int m, double x) {
+        // Condon-Shortley phase is often included in Spherical Harmonics, 
+        // but for probability density |Y|^2 it doesn't matter.
+        // Here we use a standard recurrence.
+        
+        double pmm = 1.0;
+        if (m > 0) {
+            double somx2 = sqrt((1.0 - x) * (1.0 + x));
+            double fact = 1.0;
+            for (int i = 1; i <= m; ++i) {
+                pmm *= -fact * somx2;
+                fact += 2.0;
+            }
+        }
+        if (l == m) return pmm;
+
+        double pmmp1 = x * (2 * m + 1) * pmm;
+        if (l == m + 1) return pmmp1;
+
+        double pll = 0.0;
+        for (int ll = m + 2; ll <= l; ++ll) {
+            pll = (x * (2 * ll - 1) * pmmp1 - (ll + m - 1) * pmm) / (ll - m);
+            pmm = pmmp1;
+            pmmp1 = pll;
+        }
+        return pll;
+    }
+    // Hydrogen Radial Function R_nl(r)
+    double radial_R(int n, int l, double r) {
+        double rho = 2.0 * r / (n * a0);
+        double prefactor = sqrt(pow(2.0 / (n * a0), 3) * factorial(n - l - 1) / (2.0 * n * factorial(n + l)));
+        return prefactor * exp(-rho / 2.0) * pow(rho, l) * laguerre(n - l - 1, 2 * l + 1, rho);
+    }
+    // Probability Density Function |Psi|^2
+    double probability_density(int n, int l, int m, const vec3& pos) {
+        double r = length(pos);
+        if (r < 1e-6) return 0.0;
+
+        // Convert Cartesian to Spherical
+        double theta = acos(pos.z / r); // Elevation [0, PI]
+        // phi is not needed for magnitude of stationary states as |e^im*phi| = 1
+        
+        double R = radial_R(n, l, r);
+        
+        // Normalization for Spherical Harmonics (part of it)
+        double Y_norm = sqrt(((2 * l + 1) * factorial(l - abs(m))) / (4 * M_PI * factorial(l + abs(m))));
+        double P = legendre(l, abs(m), cos(theta));
+        
+        double psi_mag = R * Y_norm * P;
+        return psi_mag * psi_mag;
+    }
+    // Bohmian Velocity Calculation
+    vec3 getBohmianVelocity(int n, int l, int m, const vec3& pos) {
+        // For a single eigenstate psi_{nlm}, the flow is purely azimuthal.
+        // v = (hbar / m_e) * (m / (r * sin(theta))) in phi_hat direction
+        
+        double r = length(pos);
+        if (r < 1e-4) return vec3(0.0);
+
+        // r_xy is r * sin(theta) (distance from Z axis)
+        double r_xy = sqrt(pos.x * pos.x + pos.y * pos.y); 
+        if (r_xy < 1e-4) return vec3(0.0); // Singularity at poles
+
+        // Velocity magnitude
+        // We scale this down significantly for visual stability
+        double speed = (m) / r_xy; // Simplified unit-less speed relative to shape
+        
+        // Phi unit vector: (-y, x, 0) / r_xy
+        vec3 phi_hat = vec3(-pos.y / r_xy, pos.x / r_xy, 0.0f);
+
+        return phi_hat * (float)speed;
+    }
+};
+Physics phy;
 
 // ================= Objects ================= //
 struct Grid {
@@ -350,10 +446,9 @@ Grid grid;
 
 struct Particle {
     vec3 pos;
-    vec3 vel;
-    vec4 color;
-    float anglex = 0.001f;
-    Particle(vec3 p, vec3 v, vec4 c) : pos(p), vel(v), color(c) {}
+    vec3 vel = vec3(0.0f);
+    vec4 color = vec4(0.5f, 1.0f, 1.0f, 0.9f);
+    Particle(vec3 p) : pos(p){}
     void drawParticle(GLint modelLoc, GLint objectColorLoc) {
         // Draw each particle
         glUniform4f(objectColorLoc, 0.5f, 1.0f, 1.0f, 0.9f); // Red color for particles
@@ -370,54 +465,54 @@ struct Particle {
     }
 };
 
-void LoadWavefunction(const string& filename, vector<Particle>& particles) {
-    vector<vec3> pts;
-    std::ifstream file("orbitals/" + filename);
-    if (!file.is_open()) {
-        cerr << "Failed to open JSON file: " << filename << endl;
+vector<Particle> particles;
+vector<Particle> GenerateParticles(int n, int l, int m, int count) {
+    vector<Particle> particles;
+    particles.reserve(count);
+
+    // Initial random walker position
+    vec3 walker = vec3(n*a0 + 1.0, 0, 0); 
+    double currentProb = phy.probability_density(n, l, m, walker);
+
+    default_random_engine generator(time(0));
+    normal_distribution<double> stepDist(0.0, 1.5); // Step size for walker
+    uniform_real_distribution<double> acceptDist(0.0, 1.0);
+
+    // Warmup (burn-in) to find the cloud
+    for(int i=0; i<5000; i++) {
+        vec3 proposal = walker + vec3(stepDist(generator), stepDist(generator), stepDist(generator));
+        double nextProb = phy.probability_density(n, l, m, proposal);
+        if (nextProb > 0 && acceptDist(generator) < (nextProb / currentProb)) {
+            walker = proposal;
+            currentProb = nextProb;
+        }
     }
 
-    json j;
-    file >> j;
+    // Actual Sampling
+    int accepted = 0;
+    while(accepted < count) {
+        // Decorrelation steps (move walker a few times between samples to avoid clumping)
+        for(int k=0; k<10; k++) {
+            vec3 proposal = walker + vec3(stepDist(generator), stepDist(generator), stepDist(generator));
+            double nextProb = phy.probability_density(n, l, m, proposal);
+            // Metropolis acceptance criterion
+            if (nextProb >= currentProb || acceptDist(generator) < (nextProb / currentProb)) {
+                walker = proposal;
+                currentProb = nextProb;
+            }
+        }
+        
+        // Color based on phase (simplified for real/im split or just depth)
+        float r_dist = length(walker);
+        float brightness = 0.2f + 0.8f * (1.0f - exp(-r_dist/10.0f));
+        vec4 col = vec4(0.2f, 0.6f, 1.0f, 0.6f); 
 
-    const float bohr_to_pm = 5.29f;
-
-    for (auto& point : j["points"]) {
-        float x = point[0].get<float>() * bohr_to_pm;
-        float y = point[1].get<float>() * bohr_to_pm;
-        float z = point[2].get<float>() * bohr_to_pm;
-
-        // Particle radius (small for electrons)
-        float radius = 1.0f;
-
-        // Color: blue for electron
-        //vec4 color = vec4(0.2f, 0.5f, 1.0f, 1.0f);
-        vec4 color = vec4(1.0f, 0.0f, 1.0f, 1.0f);
-
-        particles.emplace_back(Particle(vec3(x, y, z), vec3(0.0f), color));
+        particles.push_back(Particle(walker));
+        accepted++;
+        
+        if (accepted % 1000 == 0) cout << "Sampled " << accepted << " particles..." << endl;
     }
-}
-
-vec3 getFlowVelocity(vec3 position, int m, float flowStrength) {
-    if (m == 0) return vec3(0.0f);
-
-    // Cylindrical radius (distance from z-axis based on your code logic)
-    float rho = sqrt(position.x * position.x + position.y * position.y);
-    
-    // Avoid division by zero at the nucleus
-    if (rho < 1e-4f) return vec3(0.0f);
-
-    // Azimuthal unit vector φ̂ (Rotation around Z-axis)
-    vec3 phi_hat(
-        -position.y / rho,
-         position.x / rho,
-         0.0f
-    );
-
-    // Speed scales with m and inversely with distance
-    float speed = flowStrength * m / rho;
-
-    return speed * phi_hat;
+    return particles;
 }
 
 // ================= Main ================= //
@@ -426,41 +521,27 @@ int main () {
     GLint modelLoc = glGetUniformLocation(engine.shaderProgram, "model");
     GLint objectColorLoc = glGetUniformLocation(engine.shaderProgram, "objectColor");
     glUseProgram(engine.shaderProgram);
-    
 
-    
-    vector<Particle> particles;
-    LoadWavefunction("orbital_n6_l4_m1.json", particles);
+    float n = 6; float l = 4; float m = 1;
+
+    // ------- CREATE PARTICLES -------
+    particles = GenerateParticles(n, l, m, 10000);
 
     // ------------------ RENDERING LOOP ------------------
-    int m_value = 1;          // Magnetic quantum number
-    float flow_scale = 5.1f;  // flowStrength
-    float dt = 0.5f;          // Use a smaller dt for better stability with RK4
-
+    float dt = 0.1f;
     while (!glfwWindowShouldClose(engine.window)) {
         engine.run();
         grid.Draw(objectColorLoc);
 
         for (Particle& p : particles) {
-            // --- RK4 STAGES ---
-            
-            // k1: Velocity at the start of the interval
-            vec3 k1 = getFlowVelocity(p.pos, m_value, flow_scale);
 
-            // k2: Velocity at the midpoint using k1
-            vec3 k2 = getFlowVelocity(p.pos + k1 * (dt / 2.0f), m_value, flow_scale);
+            // Standard RK4
+            vec3 k1 = phy.getBohmianVelocity(n, l, m, p.pos);
+            vec3 k2 = phy.getBohmianVelocity(n, l, m, p.pos + k1 * (dt * 0.5f));
+            vec3 k3 = phy.getBohmianVelocity(n, l, m, p.pos + k2 * (dt * 0.5f));
+            vec3 k4 = phy.getBohmianVelocity(n, l, m, p.pos + k3 * dt);
 
-            // k3: Velocity at the midpoint using k2
-            vec3 k3 = getFlowVelocity(p.pos + k2 * (dt / 2.0f), m_value, flow_scale);
-
-            // k4: Velocity at the end of the interval using k3
-            vec3 k4 = getFlowVelocity(p.pos + k3 * dt, m_value, flow_scale);
-
-            // Final weighted update
-            p.pos += (dt / 6.0f) * (k1 + 2.0f * k2 + 2.0f * k3 + k4);
-            
-            // Optional: Update the particle's internal velocity for other calculations
-            p.vel = k1; 
+            p.pos += (k1 + 2.0f*k2 + 2.0f*k3 + k4) * (dt / 6.0f) ;
 
             p.drawParticle(modelLoc, objectColorLoc);
         }

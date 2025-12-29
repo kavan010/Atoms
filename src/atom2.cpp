@@ -398,29 +398,70 @@ void LoadWavefunction(const string& filename, vector<Particle>& particles) {
     }
 }
 
+vec3 getFlowVelocity(vec3 position, int m, float flowStrength) {
+    if (m == 0) return vec3(0.0f);
+
+    // Cylindrical radius (distance from z-axis based on your code logic)
+    float rho = sqrt(position.x * position.x + position.y * position.y);
+    
+    // Avoid division by zero at the nucleus
+    if (rho < 1e-4f) return vec3(0.0f);
+
+    // Azimuthal unit vector φ̂ (Rotation around Z-axis)
+    vec3 phi_hat(
+        -position.y / rho,
+         position.x / rho,
+         0.0f
+    );
+
+    // Speed scales with m and inversely with distance
+    float speed = flowStrength * m / rho;
+
+    return speed * phi_hat;
+}
+
 // ================= Main ================= //
 int main () {
     setupCameraCallbacks(engine.window);
     GLint modelLoc = glGetUniformLocation(engine.shaderProgram, "model");
     GLint objectColorLoc = glGetUniformLocation(engine.shaderProgram, "objectColor");
     glUseProgram(engine.shaderProgram);
+    
 
     
     vector<Particle> particles;
-    LoadWavefunction("orbital_n7_l4_m0.json", particles);
-    float dt = 10000000.1f;
+    LoadWavefunction("orbital_n6_l4_m1.json", particles);
+
     // ------------------ RENDERING LOOP ------------------
+    int m_value = 1;          // Magnetic quantum number
+    float flow_scale = 5.1f;  // flowStrength
+    float dt = 0.5f;          // Use a smaller dt for better stability with RK4
+
     while (!glfwWindowShouldClose(engine.window)) {
         engine.run();
-
-        // ---- DRAW GRID ----
         grid.Draw(objectColorLoc);
 
-
-        // ---- 2. Draw particles -------------------
         for (Particle& p : particles) {
-            p.vel = vec3(0.0f, 0.0f, 0.0f); // bohmianVelocity(p.pos.x, p.pos.y, p.pos.z);
-            p.pos += p.vel * dt;
+            // --- RK4 STAGES ---
+            
+            // k1: Velocity at the start of the interval
+            vec3 k1 = getFlowVelocity(p.pos, m_value, flow_scale);
+
+            // k2: Velocity at the midpoint using k1
+            vec3 k2 = getFlowVelocity(p.pos + k1 * (dt / 2.0f), m_value, flow_scale);
+
+            // k3: Velocity at the midpoint using k2
+            vec3 k3 = getFlowVelocity(p.pos + k2 * (dt / 2.0f), m_value, flow_scale);
+
+            // k4: Velocity at the end of the interval using k3
+            vec3 k4 = getFlowVelocity(p.pos + k3 * dt, m_value, flow_scale);
+
+            // Final weighted update
+            p.pos += (dt / 6.0f) * (k1 + 2.0f * k2 + 2.0f * k3 + k4);
+            
+            // Optional: Update the particle's internal velocity for other calculations
+            p.vel = k1; 
+
             p.drawParticle(modelLoc, objectColorLoc);
         }
 

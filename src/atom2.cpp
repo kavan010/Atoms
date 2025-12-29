@@ -143,6 +143,9 @@ struct Engine {
         //glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE);
 
+        // Enable anti-aliased points for circular particles
+        glEnable(GL_POINT_SMOOTH);
+
         // init glew
         glewExperimental = GL_TRUE;
         GLenum glewErr = glewInit();
@@ -358,8 +361,12 @@ struct Particle {
         model = glm::scale(model, glm::vec3(2.0f)); // Scale to make it visible
         glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
 
+        // Make particle size larger when camera is closer for better visibility.
+        float point_size = 100.0f / camera.radius;
+        if (point_size < 1.0f) point_size = 1.0f;
+
         // Draw a simple point for the particle
-        glPointSize(electron_r);
+        glPointSize(point_size);
         glBegin(GL_POINTS);
         glVertex3f(0.0f, 0.0f, 0.0f);
         glEnd();
@@ -420,7 +427,6 @@ double sampleR(int n, int l, mt19937& gen) {
     int idx = lower_bound(cdf.begin(), cdf.end(), u) - cdf.begin();
     return idx * (rMax / (N - 1));
 }
-
 double sampleTheta(int l, int m, mt19937& gen) {
     const int N = 2048;
     static vector<double> cdf;
@@ -480,11 +486,9 @@ double sampleTheta(int l, int m, mt19937& gen) {
     int idx = lower_bound(cdf.begin(), cdf.end(), u) - cdf.begin();
     return idx * (M_PI / (N - 1));
 }
-
 float samplePhi(float n, float l, float m) {
     return 2.0f * M_PI * dis(gen);
 }
-
 vec3 calculateProbabilityFlow(Particle& p, int n, int l, int m) {
     double r = length(p.pos);   if (r < 1e-6) return vec3(0.0f);
     double theta = acos(p.pos.y / r); 
@@ -510,10 +514,10 @@ int main () {
     GLint objectColorLoc = glGetUniformLocation(engine.shaderProgram, "objectColor");
     glUseProgram(engine.shaderProgram);
 
-    float n = 5; float l = 4; float m = -1;
+    float n = 6; float l = 4; float m = 1;
 
     // ------- CREATE PARTICLES -------
-    for (int i = 0; i < 10000; ++i) {
+    for (int i = 0; i < 50000; ++i) {
 
         float r = sampleR(n, l, gen);
         float theta = sampleTheta(l, m, gen);
@@ -544,7 +548,7 @@ int main () {
             double new_phi = atan2(temp_pos.z, temp_pos.x);
             p.pos = engine.sphericalToCartesian(r, theta, new_phi);
 
-            //cout << fixed << setprecision(2) << "Particle Vel: (" << p.vel.x << ", " << p.vel.y << ", " << p.vel.z << ")\n";
+            if (p.pos.x > 0 || p.pos.y < 0)
             p.drawParticle(modelLoc, objectColorLoc);
         }
 
@@ -556,3 +560,7 @@ int main () {
     glfwTerminate();
     return 0;
 }
+
+
+
+

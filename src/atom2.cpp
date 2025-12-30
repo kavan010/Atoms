@@ -351,11 +351,11 @@ struct Particle {
     vec3 pos;
     float theta, phi;
     vec3 vel = vec3(0.0f);
-    vec4 color = vec4(0.5f, 1.0f, 1.0f, 0.9f);
+    vec4 color = vec4(1.0f);
     Particle(vec3 p) : pos(p){}
     void drawParticle(GLint modelLoc, GLint objectColorLoc) {
         // Draw each particle
-        glUniform4f(objectColorLoc, 0.5f, 1.0f, 1.0f, 0.9f); // Red color for particles
+        glUniform4f(objectColorLoc, 0.5f, 1.0f, 1.0f, 20 / length(pos)); // Red color for particles
         glm::mat4 model = glm::mat4(1.0f);
         model = glm::translate(model, pos);
         model = glm::scale(model, glm::vec3(2.0f)); // Scale to make it visible

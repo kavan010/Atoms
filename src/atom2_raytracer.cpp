@@ -110,8 +110,15 @@ struct Engine {
         // blending for smooth rendering
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        // glEnable(GL_DEPTH_TEST); 
-        // glDepthFunc(GL_LESS);
+        // --- NEW: Initialize the SSBO ---
+        glGenBuffers(1, &ssbo_spheres);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_spheres);
+        // Allocate space for 25,000 spheres (matches your particle count)
+        glBufferData(GL_SHADER_STORAGE_BUFFER, 25000 * sizeof(Sphere), NULL, GL_DYNAMIC_DRAW);
+        // Bind the buffer to index 0 so the shader can see it
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssbo_spheres);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
         raytracingShaderProgram = CreateRaytracingShaderProgram();
         setupFullscreenQuad();
     }
@@ -267,6 +274,18 @@ struct Engine {
         return shaderProgram;
     }
     void runRayTracer(vector<Sphere> sphere_data) {
+        if (sphere_data.empty()) return;
+        // Update GPU buffer with current sphere positions
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_spheres);
+        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sphere_data.size() * sizeof(Sphere), sphere_data.data());
+        
+        // Crucial: Link the buffer to binding point 0 for the shader
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssbo_spheres);
+
+        // Raytracing Render
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glUseProgram(raytracingShaderProgram);
+
         // Update GPU buffer
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_spheres);
         glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sphere_data.size() * sizeof(Sphere), sphere_data.data());
@@ -297,17 +316,17 @@ struct Engine {
     }
 
     void setupCameraCallbacks() {
-    glfwSetWindowUserPointer(window, &camera);
-    glfwSetMouseButtonCallback(window, [](GLFWwindow* win, int button, int action, int mods) {
-        ((Camera*)glfwGetWindowUserPointer(win))->processMouseButton(button, action, mods, win);
-    });
-    glfwSetCursorPosCallback(window, [](GLFWwindow* win, double x, double y) {
-        ((Camera*)glfwGetWindowUserPointer(win))->processMouseMove(x, y);
-    });
-    glfwSetScrollCallback(window, [](GLFWwindow* win, double xoffset, double yoffset) {
-        ((Camera*)glfwGetWindowUserPointer(win))->processScroll(xoffset, yoffset);
-    });
-}
+        glfwSetWindowUserPointer(window, &camera);
+        glfwSetMouseButtonCallback(window, [](GLFWwindow* win, int button, int action, int mods) {
+            ((Camera*)glfwGetWindowUserPointer(win))->processMouseButton(button, action, mods, win);
+        });
+        glfwSetCursorPosCallback(window, [](GLFWwindow* win, double x, double y) {
+            ((Camera*)glfwGetWindowUserPointer(win))->processMouseMove(x, y);
+        });
+        glfwSetScrollCallback(window, [](GLFWwindow* win, double xoffset, double yoffset) {
+            ((Camera*)glfwGetWindowUserPointer(win))->processScroll(xoffset, yoffset);
+        });
+    }
 };
 Engine engine;
 
@@ -459,7 +478,7 @@ vec3 calculateProbabilityFlow(Particle& p, int n, int l, int m) {
     return vec3((float)vx, (float)vy, (float)vz);
 }
 
-vec4 inferno(double r, double theta, double phi, int n, int l, int m)
+vec4 inferno2(double r, double theta, double phi, int n, int l, int m)
 {
     // --- radial part |R(r)|^2 ---
     double rho = 2.0 * r / (n * a0);
@@ -537,6 +556,109 @@ vec4 inferno(double r, double theta, double phi, int n, int l, int m)
     return vec4(rC, gC * 0.8f, bC, 1.0f);
 }
 
+
+vec4 heatmap_fire(float value) {
+    // Ensure value is clamped between 0 and 1
+    value = std::max(0.0f, std::min(1.0f, value));
+
+    // Define color stops for the "Heat/Fire" pattern
+    // Order: Black -> Dark Purple -> Red -> Orange -> Yellow -> White
+    const int num_stops = 6;
+    vec4 colors[num_stops] = {
+        {0.0f, 0.0f, 0.0f, 1.0f}, // 0.0: Black
+        {0.5f, 0.0f, 0.99f, 1.0f}, // 0.2: Dark Purple
+        {0.8f, 0.0f, 0.0f, 1.0f}, // 0.4: Deep Red
+        {1.0f, 0.5f, 0.0f, 1.0f}, // 0.6: Orange
+        {1.0f, 1.0f, 0.0f, 1.0f}, // 0.8: Yellow
+        {1.0f, 1.0f, 1.0f, 1.0f}  // 1.0: White
+    };
+
+    // Find which segment the value falls into
+    float scaled_v = value * (num_stops - 1);
+    int i = static_cast<int>(scaled_v);
+    int next_i = std::min(i + 1, num_stops - 1);
+    
+    // Calculate how far we are between stop 'i' and 'next_i'
+    float local_t = scaled_v - i;
+
+    // Linearly interpolate between the two colors
+    vec4 result;
+    result.r = colors[i].r + local_t * (colors[next_i].r - colors[i].r);
+    result.g = colors[i].g + local_t * (colors[next_i].g - colors[i].g);
+    result.b = colors[i].b + local_t * (colors[next_i].b - colors[i].b);
+    result.a = 1.0f; // Solid opacity
+
+    return result;
+}
+vec4 inferno(double r, double theta, double phi, int n, int l, int m) {
+    // --- radial part |R(r)|^2 ---
+    double rho = 2.0 * r / (n * a0);
+
+    int k = n - l - 1;
+    int alpha = 2 * l + 1;
+
+    double L = 1.0;
+    if (k == 1) {
+        L = 1.0 + alpha - rho;
+    } else if (k > 1) {
+        double Lm2 = 1.0;
+        double Lm1 = 1.0 + alpha - rho;
+        for (int j = 2; j <= k; ++j) {
+            L = ((2*j - 1 + alpha - rho) * Lm1 -
+                 (j - 1 + alpha) * Lm2) / j;
+            Lm2 = Lm1;
+            Lm1 = L;
+        }
+    }
+
+    double norm = pow(2.0 / (n * a0), 3)
+                * tgamma(n - l)
+                / (2.0 * n * tgamma(n + l + 1));
+
+    double R = sqrt(norm) * exp(-rho / 2.0) * pow(rho, l) * L;
+    double radial = R * R;
+
+    // --- angular part |P_l^m(cosθ)|^2 ---
+    double x = cos(theta);
+
+    double Pmm = 1.0;
+    if (m > 0) {
+        double somx2 = sqrt((1.0 - x) * (1.0 + x));
+        double fact = 1.0;
+        for (int j = 1; j <= m; ++j) {
+            Pmm *= -fact * somx2;
+            fact += 2.0;
+        }
+    }
+
+    double Plm;
+    if (l == m) {
+        Plm = Pmm;
+    } else {
+        double Pm1m = x * (2*m + 1) * Pmm;
+        if (l == m + 1) {
+            Plm = Pm1m;
+        } else {
+            for (int ll = m + 2; ll <= l; ++ll) {
+                double Pll = ((2*ll - 1) * x * Pm1m -
+                              (ll + m - 1) * Pmm) / (ll - m);
+                Pmm = Pm1m;
+                Pm1m = Pll;
+            }
+            Plm = Pm1m;
+        }
+    }
+
+    double angular = Plm * Plm;
+
+    double intensity = radial * angular;
+
+    //cout << "intensity: " << intensity << endl;
+
+    return heatmap_fire(intensity * 1500); // Scale for better color mapping
+}
+
+
 // ================= Main Loop ================= //
 int main () {
     engine.setupCameraCallbacks();
@@ -545,7 +667,7 @@ int main () {
     float n = 5; float l = 4; float m = 1;
 
     // --- Sample particles ---
-    for (int i = 0; i < 125000; ++i) {
+    for (int i = 0; i < 25000; ++i) {
         // --- get x, y, z, positions
         vec3 pos = engine.sphericalToCartesian(
             sampleR(n, l, gen), 

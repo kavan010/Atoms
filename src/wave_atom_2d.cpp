@@ -80,11 +80,16 @@ struct Particle {
             glLineWidth(0.4f);
             glBegin(GL_LINE_LOOP);
             glColor3f(0.4f, 0.4f, 0.4f);
+            
+            float numOsolations = -13.6f / energy;
+            float baseOrbit = orbitDistance;
+            float amplitude = 50.0f;
 
             for (int i = 0; i <= segments; i++) {
-                float r = orbitDistance * n;
-                float x = cos(2*M_PI*i/segments) * r;
-                float y = sin(2*M_PI*i/segments) * r;
+                float loop_angle = 2.0f * M_PI * i / segments;
+                float r = baseOrbit + amplitude * sin(numOsolations * loop_angle);
+                float x = cos(loop_angle) * r;
+                float y = sin(loop_angle) * r;
                 glVertex2f(x + centre.x, y + centre.y);
             }
             glEnd();
@@ -95,6 +100,7 @@ struct Particle {
         if (charge == -1)       { r = 10; glColor3f(0.0f, 1.0f, 1.0f); } 
         else if (charge == 1)   { r = 50; glColor3f(1.0f, 0.0f, 0.0f); } 
         else                    { r = 10; glColor3f(0.5f, 0.5f, 0.5f); }
+
         
         glBegin(GL_TRIANGLE_FAN);
         glVertex2f(pos.x, pos.y);
@@ -110,8 +116,13 @@ struct Particle {
     void update (vec2 c) {
         
         // --- set radius with oscillation ---
+        float numOsolations = 0;
+        if (energy < 0) {
+            numOsolations = -13.6f / energy;
+        }
         float baseOrbit = orbitDistance;
-        float r = baseOrbit * n;
+        float amplitude = 50.0f;
+        float r = baseOrbit + amplitude * sin(numOsolations * angle);
 
         angle += 0.05;
         

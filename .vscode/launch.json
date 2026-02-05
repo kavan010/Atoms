@@ -5,8 +5,8 @@
             "name": "g++ Debug",
             "type": "cppdbg",
             "request": "launch",
-            //"program": "${workspaceFolder}/bin/atom.exe",
-            "program": "${workspaceFolder}/bin/atom2.exe",           // here
+            "program": "${workspaceFolder}/bin/atom.exe",
+            //"program": "${workspaceFolder}/bin/atom2.exe",           // here
             "args": [],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}/src",
@@ -27,8 +27,8 @@
             "name": "CUDA Debug",
             "type": "cppdbg",
             "request": "launch",
-            //"program": "${workspaceFolder}/bin/atom.exe",
-            "program": "${workspaceFolder}/bin/atom2.exe",           // here
+            "program": "${workspaceFolder}/bin/atom.exe",
+            //"program": "${workspaceFolder}/bin/atom2.exe",           // here
             "args": [],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}/src",

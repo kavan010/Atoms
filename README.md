@@ -2,7 +2,7 @@
 
 Here is the raw code for the atom simulation, includes raytracer version, realtime runner, and 2D version
 
-web version: [kavang.com/atom](url)
+web version: [kavang.com/atom](https://www.kavang.com/atom)
 
 What the model does:
 1. Takes the quantum numbers (n, l, m) that describe an orbital's shape

@@ -2,6 +2,8 @@
 
 Here is the raw code for the atom simulation, includes raytracer version, realtime runner, and 2D version
 
+web version: kavang.com/atom
+
 What the model does:
 1. Takes the quantum numbers (n, l, m) that describe an orbital's shape
 2. Using the schrodinger equation, sample r, theta, and phi coordinates from those quantum numbers

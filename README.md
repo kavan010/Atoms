@@ -42,15 +42,24 @@ What the model does:
 
 ### Alternative: Debian/Ubuntu apt workaround
 
-If you don't want to use vcpkg, or you just need a quick way to install the native development packages on Debian/Ubuntu, install these packages and then run the normal CMake steps above:
+If you don't want to use vcpkg, or you just need a quick way to install the native development packages on Debian/Ubuntu, install these packages and build:
 
 ```bash
 sudo apt update
 sudo apt install build-essential cmake \
 	libglew-dev libglfw3-dev libglm-dev libgl1-mesa-dev
 ```
+This provides the GLEW, GLFW, GLM and OpenGL libraries so `find_package(...)` calls in `CMakeLists.txt` can locate the libraries without vcpkg.
 
-This provides the GLEW, GLFW, GLM and OpenGL development files so `find_package(...)` calls in `CMakeLists.txt` can locate the libraries. After installing, run the `cmake -B build -S .` and `cmake --build build` commands as shown in the Build Instructions.
+Then run:
+```
+cmake -B build -S .
+cmake --build build
+
+# run executables (located in build/bin/) e.g.:
+./build/bin/atom_realtime
+```
+
 
 ## **How the code works:**
 the 2D bohr model works is in atom.cpp, the raytracer and realtime models are right beside

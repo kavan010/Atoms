@@ -85,5 +85,6 @@
         "ranges": "cpp",
         "valarray": "cpp",
         "complex": "cpp"
-    }
+    },
+    "C_Cpp.errorSquiggles": "disabled"
 }

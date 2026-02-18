@@ -23,12 +23,12 @@ using namespace std;
 
 // ================= Constants ================= //
 const float a0 = 1;
-float electron_r = 1.5f; // Will be used as radius for ray-traced spheres
+float electron_r = 1.5f; // radius for spheres
 const double hbar = 1;
 const double m_e = 1;
 const double zmSpeed = 10.0;
 
-// --- Global quantum numbers (make accessible to callbacks/main loop)
+// --- Global quantum numbers ---
 int n = 2, l = 1, m = 0, N = 100000;
 
 // ================= Physics Sampling ================= //
@@ -43,7 +43,7 @@ vector<Particle> particles;
 // --- random devices ---
 random_device rd; mt19937 gen(rd()); uniform_real_distribution<float> dis(0.0f, 1.0f);
 
-// --- sample R ---
+// --- sample R ---                 <- uses CDF sampling
 double sampleR(int n, int l, mt19937& gen) {
     const int N = 4096;
     //const double a0 = 1.0;
@@ -95,7 +95,7 @@ double sampleR(int n, int l, mt19937& gen) {
     int idx = lower_bound(cdf.begin(), cdf.end(), u) - cdf.begin();
     return idx * (rMax / (N - 1));
 }
-// --- sample Theta ---
+// --- sample Theta ---             <- uses CDF sampling
 double sampleTheta(int l, int m, mt19937& gen) {
     const int N = 2048;
     static vector<double> cdf;
@@ -155,7 +155,7 @@ double sampleTheta(int l, int m, mt19937& gen) {
     int idx = lower_bound(cdf.begin(), cdf.end(), u) - cdf.begin();
     return idx * (M_PI / (N - 1));
 }
-// --- sample Phi (uniform) ---
+// --- sample Phi (uniform) ---     <- uses CDF sampling
 float samplePhi(float n, float l, float m) {
     return 2.0f * M_PI * dis(gen);
 }
@@ -178,6 +178,7 @@ vec3 calculateProbabilityFlow(Particle& p, int n, int l, int m) {
     return vec3((float)vx, (float)vy, (float)vz);
 }
 
+// --- color map ---
 vec4 heatmap_fire(float value) {
     // Ensure value is clamped between 0 and 1
     value = std::max(0.0f, std::min(1.0f, value));
@@ -280,7 +281,7 @@ vec4 inferno(double r, double theta, double phi, int n, int l, int m) {
 }
 
 
-// ================= Raytracer ================= //
+// ================= camera ================= //
 struct Camera {
     vec3 target = vec3(0.0f, 0.0f, 0.0f);
     float radius = 50.0f;
@@ -363,12 +364,13 @@ struct Engine {
     int WIDTH = 800;
     int HEIGHT = 600;
 
-    // Raytracing vals
+    // renders vars
     GLuint sphereVAO, sphereVBO;
     int sphereVertexCount;
     GLuint shaderProgram;
     GLint modelLoc, viewLoc, projLoc, colorLoc;
 
+    // --- shaders ---
     const char* vertexShaderSource = R"glsl(
         #version 330 core
         layout(location=0) in vec3 aPos; uniform mat4 model; uniform mat4 view;
@@ -398,7 +400,7 @@ struct Engine {
         glewInit();
         glEnable(GL_DEPTH_TEST);
 
-        // Generate Sphere Vertices manually (like you did in the gravity sim)
+        // Generate Sphere Vertices manually (like I did in the gravity sim)
         vector<float> vertices;
         float r = 0.05f; // Small sphere for particles
         int stacks = 10, sectors = 10;
@@ -630,24 +632,18 @@ int main () {
     glUseProgram(engine.shaderProgram);
     engine.setupCameraCallbacks();
 
-    // --- Quantum numbers setup (using globals) ---
+    // --- scale r for bigger orbitals ---
     electron_r = float(n) / 3.0f;
 
     // --- Sample particles ---
     generateParticles(250000);
-
-    // Inside main(), before the while loop:
-    GLfloat spec[] = { 1.0f, 1.0f, 1.0f, 1.0f };
-    GLfloat shininess[] = { 50.0f };
-    glMaterialfv(GL_FRONT, GL_SPECULAR, spec);
-    glMaterialfv(GL_FRONT, GL_SHININESS, shininess);
 
     float dt = 0.5f;
     cout << "Starting simulation..." << endl;
     while (!glfwWindowShouldClose(engine.window)) {
         grid.Draw(objectColorLoc);
 
-        // ------ Draw Particles ------
+        // ------ Update Probability current ------
         for (Particle& p : particles) {
             double r = length(p.pos);
             if (r > 1e-6) {
@@ -658,14 +654,14 @@ int main () {
                 p.pos = engine.sphericalToCartesian(r, theta, new_phi);
             }
         }
+        // ------ Draw Particles ------
         engine.drawSpheres(particles);
 
         glfwSwapBuffers(engine.window);
         glfwPollEvents();
     }
 
-    // --- Cleanup ---
-    
+    // --- close ---
     glfwDestroyWindow(engine.window);
     glfwTerminate();
     return 0;

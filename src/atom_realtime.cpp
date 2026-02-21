@@ -1,6 +1,8 @@
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
+#ifndef __APPLE__
 #include <GL/glu.h>
+#endif
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -15,6 +17,7 @@
 #include <fstream>
 #include <complex>
 #include <random>
+#include <string>
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -30,6 +33,16 @@ const double zmSpeed = 10.0;
 
 // --- Global quantum numbers ---
 int n = 2, l = 1, m = 0, N = 100000;
+
+struct QuantumCombo {
+    int n;
+    int l;
+    int m;
+};
+
+vector<QuantumCombo> quantumCombos;
+int currentComboIndex = -1;
+constexpr int selectorMaxN = 6;
 
 // ================= Physics Sampling ================= //
 struct Particle {
@@ -295,7 +308,7 @@ struct Camera {
     double lastX = 0.0, lastY = 0.0;
 
     vec3 position() const {
-        float clampedElevation = clamp(elevation, 0.01f, float(M_PI) - 0.01f);
+        float clampedElevation = glm::clamp(elevation, 0.01f, float(M_PI) - 0.01f);
         return vec3(
             radius * sin(clampedElevation) * cos(azimuth),
             radius * cos(clampedElevation),
@@ -359,6 +372,65 @@ void generateParticles(int N) {
     }
 }
 
+void buildQuantumCombos(int maxN = selectorMaxN) {
+    quantumCombos.clear();
+    for (int nValue = 1; nValue <= maxN; ++nValue) {
+        for (int lValue = 0; lValue < nValue; ++lValue) {
+            for (int mValue = -lValue; mValue <= lValue; ++mValue) {
+                quantumCombos.push_back({nValue, lValue, mValue});
+            }
+        }
+    }
+}
+
+int findComboIndex(int nValue, int lValue, int mValue) {
+    for (size_t i = 0; i < quantumCombos.size(); ++i) {
+        const QuantumCombo& combo = quantumCombos[i];
+        if (combo.n == nValue && combo.l == lValue && combo.m == mValue) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+void syncCurrentComboIndex() {
+    currentComboIndex = findComboIndex(n, l, m);
+}
+
+void stepComboSelection(int direction) {
+    if (quantumCombos.empty()) return;
+
+    if (currentComboIndex < 0) {
+        syncCurrentComboIndex();
+        if (currentComboIndex < 0) currentComboIndex = 0;
+    }
+
+    const int total = static_cast<int>(quantumCombos.size());
+    currentComboIndex = (currentComboIndex + direction) % total;
+    if (currentComboIndex < 0) currentComboIndex += total;
+
+    const QuantumCombo& combo = quantumCombos[currentComboIndex];
+    n = combo.n;
+    l = combo.l;
+    m = combo.m;
+}
+
+void updateWindowTitle(GLFWwindow* window) {
+    if (!window) return;
+
+    string title = "Atom Prob-Flow - n=" + to_string(n)
+                 + " l=" + to_string(l)
+                 + " m=" + to_string(m)
+                 + " N=" + to_string(N);
+
+    if (currentComboIndex >= 0 && !quantumCombos.empty()) {
+        title += "  [" + to_string(currentComboIndex + 1)
+              + "/" + to_string(quantumCombos.size()) + "]";
+    }
+
+    glfwSetWindowTitle(window, title.c_str());
+}
+
 struct Engine {
     GLFWwindow* window;
     int WIDTH = 800;
@@ -393,11 +465,63 @@ struct Engine {
             FragColor = vec4(objectColor.rgb , objectColor.a); 
         } )glsl";
 
+    static bool checkShaderCompile(GLuint shader, const char* stage) {
+        GLint ok = GL_FALSE;
+        glGetShaderiv(shader, GL_COMPILE_STATUS, &ok);
+        if (ok == GL_TRUE) return true;
+
+        GLint logLen = 0;
+        glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &logLen);
+        string log(std::max(1, logLen), '\0');
+        glGetShaderInfoLog(shader, logLen, nullptr, log.data());
+        cerr << "Shader compile error (" << stage << "): " << log << '\n';
+        return false;
+    }
+
+    static bool checkProgramLink(GLuint program) {
+        GLint ok = GL_FALSE;
+        glGetProgramiv(program, GL_LINK_STATUS, &ok);
+        if (ok == GL_TRUE) return true;
+
+        GLint logLen = 0;
+        glGetProgramiv(program, GL_INFO_LOG_LENGTH, &logLen);
+        string log(std::max(1, logLen), '\0');
+        glGetProgramInfoLog(program, logLen, nullptr, log.data());
+        cerr << "Program link error: " << log << '\n';
+        return false;
+    }
+
     Engine() {
-        if (!glfwInit()) exit(-1);
+        if (!glfwInit()) {
+            cerr << "GLFW init failed\n";
+            exit(EXIT_FAILURE);
+        }
+
+#ifdef __APPLE__
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
+        glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+        glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+#endif
+
         window = glfwCreateWindow(800, 600, "Atom Prob-Flow", NULL, NULL);
+        if (!window) {
+            cerr << "Failed to create GLFW window\n";
+            glfwTerminate();
+            exit(EXIT_FAILURE);
+        }
+
         glfwMakeContextCurrent(window);
-        glewInit();
+        glewExperimental = GL_TRUE;
+        GLenum glewStatus = glewInit();
+        if (glewStatus != GLEW_OK) {
+            cerr << "GLEW init failed: " << reinterpret_cast<const char*>(glewGetErrorString(glewStatus)) << '\n';
+            glfwDestroyWindow(window);
+            glfwTerminate();
+            exit(EXIT_FAILURE);
+        }
+        // Clear benign GL_INVALID_ENUM that can occur on core profiles after glewInit.
+        glGetError();
         glEnable(GL_DEPTH_TEST);
 
         // Generate Sphere Vertices manually (like I did in the gravity sim)
@@ -424,21 +548,39 @@ struct Engine {
         GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
         glShaderSource(vertexShader, 1, &vertexShaderSource, NULL);
         glCompileShader(vertexShader);
+        if (!checkShaderCompile(vertexShader, "vertex")) {
+            glfwDestroyWindow(window);
+            glfwTerminate();
+            exit(EXIT_FAILURE);
+        }
 
         GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
         glShaderSource(fragmentShader, 1, &fragmentShaderSource, NULL);
         glCompileShader(fragmentShader);
+        if (!checkShaderCompile(fragmentShader, "fragment")) {
+            glfwDestroyWindow(window);
+            glfwTerminate();
+            exit(EXIT_FAILURE);
+        }
 
         shaderProgram = glCreateProgram();
         glAttachShader(shaderProgram, vertexShader);
         glAttachShader(shaderProgram, fragmentShader);
         glLinkProgram(shaderProgram);
+        if (!checkProgramLink(shaderProgram)) {
+            glfwDestroyWindow(window);
+            glfwTerminate();
+            exit(EXIT_FAILURE);
+        }
 
         // Get uniform locations
         modelLoc = glGetUniformLocation(shaderProgram, "model");
         viewLoc  = glGetUniformLocation(shaderProgram, "view");
         projLoc  = glGetUniformLocation(shaderProgram, "projection");
         colorLoc = glGetUniformLocation(shaderProgram, "objectColor");
+
+        glDeleteShader(vertexShader);
+        glDeleteShader(fragmentShader);
     }
     vec3 sphericalToCartesian(float r, float theta, float phi){
         float x = r * sin(theta) * cos(phi);
@@ -501,37 +643,51 @@ struct Engine {
         glfwSetScrollCallback(window, [](GLFWwindow* win, double xoffset, double yoffset) {
             ((Camera*)glfwGetWindowUserPointer(win))->processScroll(xoffset, yoffset);
         });
-        // Key callback: modify global quantum numbers
+        // Key callback: modify global quantum numbers / cycle valid combinations.
         glfwSetKeyCallback(window, [](GLFWwindow* win, int key, int scancode, int action, int mods) {
             if (!(action == GLFW_PRESS || action == GLFW_REPEAT)) return;
 
-            if (key == GLFW_KEY_W) {
+            bool shouldRegen = false;
+            bool usedSelector = false;
+
+            if (key == GLFW_KEY_RIGHT) {
+                stepComboSelection(1);
+                shouldRegen = true;
+                usedSelector = true;
+            } else if (key == GLFW_KEY_LEFT) {
+                stepComboSelection(-1);
+                shouldRegen = true;
+                usedSelector = true;
+            } else if (key == GLFW_KEY_W) {
                 n += 1;
-                generateParticles(N);
+                shouldRegen = true;
             } else if (key == GLFW_KEY_S) {
                 n -= 1;
                 if (n < 1) n = 1;
-                generateParticles(N);
+                shouldRegen = true;
             } else if (key == GLFW_KEY_E) {
                 l += 1;
-                generateParticles(N);
+                shouldRegen = true;
             } else if (key == GLFW_KEY_D) {
                 l -= 1;
                 if (l < 0) l = 0;
-                generateParticles(N);
+                shouldRegen = true;
             } else if (key == GLFW_KEY_R) {
                 m += 1;
-                generateParticles(N);
+                shouldRegen = true;
             } else if (key == GLFW_KEY_F) {
                 m -= 1;
-                generateParticles(N);
+                shouldRegen = true;
             } else if (key == GLFW_KEY_T) {
-                N +=100000;
-                generateParticles(N);
+                N += 100000;
+                shouldRegen = true;
             } else if (key == GLFW_KEY_G) {
-                N -=100000;
-                generateParticles(N);
+                N -= 100000;
+                if (N < 1000) N = 1000;
+                shouldRegen = true;
             }
+
+            if (!shouldRegen) return;
 
             // Clamp to valid ranges
             if (l > n - 1) l = n - 1;
@@ -540,16 +696,22 @@ struct Engine {
             if (m < -l) m = -l;
 
             electron_r = float(n) / 3.0f;
+            syncCurrentComboIndex();
             cout << "Quantum numbers updated: n=" << n << " l=" << l << " m=" << m << " N=" << N << "\n";
+            if (usedSelector && currentComboIndex >= 0) {
+                cout << "Selector: " << (currentComboIndex + 1) << "/" << quantumCombos.size() << "\n";
+            }
+            generateParticles(N);
+            updateWindowTitle(win);
         });
     }
 };
-Engine engine;
 
 struct Grid {
+    Engine& engine;
     GLuint gridVAO, gridVBO;
     vector<float> vertices;
-    Grid() {
+    Grid(Engine& engineRef) : engine(engineRef) {
         vertices = CreateGridVertices(500.0f, 2);
         engine.CreateVBOVAO(gridVAO, gridVBO, vertices.data(), vertices.size());
     }
@@ -623,11 +785,14 @@ struct Grid {
 
     }
 };
-Grid grid;
 
 // ================= Main Loop ================= //
 int main () {
-    GLint modelLoc = glGetUniformLocation(engine.shaderProgram, "model");
+    Engine engine;
+    Grid grid(engine);
+    buildQuantumCombos();
+    syncCurrentComboIndex();
+
     GLint objectColorLoc = glGetUniformLocation(engine.shaderProgram, "objectColor");
     glUseProgram(engine.shaderProgram);
     engine.setupCameraCallbacks();
@@ -636,7 +801,10 @@ int main () {
     electron_r = float(n) / 3.0f;
 
     // --- Sample particles ---
-    generateParticles(250000);
+    N = 250000;
+    generateParticles(N);
+    updateWindowTitle(engine.window);
+    cout << "Controls: LEFT/RIGHT cycle valid (n,l,m) combinations.\n";
 
     float dt = 0.5f;
     cout << "Starting simulation..." << endl;

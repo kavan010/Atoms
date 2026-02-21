@@ -248,7 +248,7 @@ vec4 inferno2(double r, double theta, double phi, int n, int l, int m)
     double t = log10(intensity + 1e-12) + 12.0;
     t /= 12.0;
 
-    t = clamp(t, 0.0, 1.0);
+    t = glm::clamp(t, 0.0, 1.0);
 
     // --- inferno-style ramp ---
     float rC = smoothstep(0.15f, 1.0f, static_cast<float>(t));
@@ -376,7 +376,7 @@ struct Camera {
     double lastX = 0.0, lastY = 0.0;
 
     vec3 position() const {
-        float clampedElevation = clamp(elevation, 0.01f, float(M_PI) - 0.01f);
+        float clampedElevation = glm::clamp(elevation, 0.01f, float(M_PI) - 0.01f);
         return vec3(
             radius * sin(clampedElevation) * cos(azimuth),
             radius * cos(clampedElevation),
